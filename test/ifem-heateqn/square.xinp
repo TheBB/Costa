@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+
+<simulation>
+
+  <geometry dim="2" sets="true">
+    <raiseorder patch="1" u="1" v="1"/>
+    <refine type="uniform" patch="1" u="7" v="7"/>
+  </geometry>
+
+  <heatequation>
+    <boundaryconditions>
+      <dirichlet set="Boundary" comp="1"/>
+    </boundaryconditions>
+    <source type="expression">
+      0.0
+    </source>
+  </heatequation>
+
+  <timestepping start="0.0" end="1.0" dt="0.1" type="be"/>
+
+</simulation>
