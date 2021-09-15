@@ -1,12 +1,15 @@
-from abc import abstractmethod, ABC
+from abc import abstractmethod, abstractproperty, ABC
 
 
 class PhysicsModel(ABC):
 
+    @abstractproperty
+    def ndof(self):
+        """Return the number of degrees of freedom."""
+
     @abstractmethod
     def dirichlet_dofs(self):
         """Return a list of Dirichlet DoF IDs (1-indexed)."""
-        ...
 
     @abstractmethod
     def predict(self, params, uprev):
@@ -19,7 +22,6 @@ class PhysicsModel(ABC):
         :param uprev: Previous timestep.  May be ignored by a stationary solver.
         :return: Prediction of next timestep.
         """
-        ...
 
     @abstractmethod
     def residual(self, params, uprev, unext):
@@ -30,7 +32,6 @@ class PhysicsModel(ABC):
         :param uprev: Previous timestep.  May be ignored by a stationary solver.
         :param unext: The purported exact or experimental solution.
         :return: The residual b - Au."""
-        ...
 
     @abstractmethod
     def correct(self, params, uprev, sigma):
@@ -44,7 +45,6 @@ class PhysicsModel(ABC):
             should be equivalent to predict(params, uprev).
         :return: Corrected prediction of next timestep.
         """
-        ...
 
 
 
@@ -62,4 +62,3 @@ class DataModel(ABC):
         :return: Right-hand-side perturbation for use in PhysicModel.correct
             (internal vector).
         """
-        ...
