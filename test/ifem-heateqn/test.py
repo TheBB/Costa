@@ -24,5 +24,6 @@ initial = runner.to_external(solutions[0])
 sols = list(runner.solve(initial, dt, nsteps))
 
 # Check for matching solutions
+assert len(sols) == nsteps + 1
 for sol, ref in zip(sols, solutions):
     assert np.linalg.norm(sol - runner.to_external(ref)) < 1e-12
