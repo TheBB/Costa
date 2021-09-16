@@ -52,7 +52,7 @@ class Timestepper:
         """
         yield initial
 
-        params = [dt]
+        params = {'dt': dt}
         for _ in range(nsteps):
             predicted = self.pbm.predict(params, initial)
             residual = self.to_external(self.ddm(params, predicted))
