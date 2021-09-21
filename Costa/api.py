@@ -6,6 +6,7 @@ import numpy as np
 
 
 Parameters = Dict[str, Union[float, List[float]]]
+Vector = np.ndarray
 
 
 class PhysicsModel(ABC):
@@ -15,11 +16,15 @@ class PhysicsModel(ABC):
         """Return the number of degrees of freedom."""
 
     @abstractmethod
-    def dirichlet_dofs(self) -> np.ndarray:
+    def dirichlet_dofs(self) -> Vector:
         """Return a list of Dirichlet DoF IDs (1-indexed)."""
 
     @abstractmethod
-    def predict(self, params: Parameters, uprev: np.ndarray) -> np.ndarray:
+    def initial_condition(self, params: Parameters) -> Vector:
+        """Return the configured initial condition for a set of parameters."""
+
+    @abstractmethod
+    def predict(self, params: Parameters, uprev: Vector) -> Vector:
         """Make an uncorrected prediction of the next timestep given the
         previous timestep.  This is nothing more than a standard discrete
         timestep method.
@@ -31,7 +36,7 @@ class PhysicsModel(ABC):
         """
 
     @abstractmethod
-    def residual(self, params: Parameters, uprev: np.ndarray, unext: np.ndarray) -> np.ndarray:
+    def residual(self, params: Parameters, uprev: Vector, unext: Vector) -> Vector:
         """Calculate the residual b - Au given the assumed solution unext.
 
         :param params: Dictionary of parameters.
@@ -41,7 +46,7 @@ class PhysicsModel(ABC):
         :return: The residual b - Au."""
 
     @abstractmethod
-    def correct(self, params: Parameters, uprev: np.ndarray, sigma: np.ndarray) -> np.ndarray:
+    def correct(self, params: Parameters, uprev: Vector, sigma: Vector) -> Vector:
         """Calculate a corrected prediction of the next timestep given
         the previous timestep and a right-hand side perturbation.
 
@@ -58,7 +63,7 @@ class PhysicsModel(ABC):
 class DataModel(ABC):
 
     @abstractmethod
-    def __call__(self, params: Parameters, upred: np.ndarray) -> np.ndarray:
+    def __call__(self, params: Parameters, upred: Vector) -> Vector:
         """Calculate a right-hand side perturbation to use for a corrected
         prediction of the next timestep given the uncorrected prediction.
 
