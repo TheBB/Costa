@@ -21,7 +21,7 @@ class Omniscient(DataModel):
         self.solutions = list(solutions)
 
     def __call__(self, params, upred: np.ndarray) -> np.ndarray:
-        uprev = util.to_external(self.solutions.pop(0), dofs=self.dirichlet_dofs)
-        unext = util.to_external(self.solutions[0], dofs=self.dirichlet_dofs)
+        uprev = self.solutions.pop(0)
+        unext = self.solutions[0]
         sigma = self.pbm.residual(params, uprev, unext)
-        return -util.to_internal(sigma, dofs=self.dirichlet_dofs)
+        return -np.array(sigma)
