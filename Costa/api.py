@@ -70,7 +70,6 @@ class DataModel(ABC):
         :param params: Dictionary of parameters.
             By convention the timestep is named 'dt'.
         :param upred: Uncorrected prediction of next timestep (return value of
-            PhysicsModel.predict) - external vector.
-        :return: Right-hand-side perturbation for use in PhysicModel.correct
-            (internal vector).
+            PhysicsModel.predict).
+        :return: Right-hand-side perturbation for use in PhysicModel.correct.
         """
