@@ -37,13 +37,13 @@ class PhysicsModel(ABC):
 
     @abstractmethod
     def residual(self, params: Parameters, uprev: Vector, unext: Vector) -> Vector:
-        """Calculate the residual b - Au given the assumed solution unext.
+        """Calculate the residual Au - b given the assumed solution unext.
 
         :param params: Dictionary of parameters.
             By convention the timestep is named 'dt'.
         :param uprev: Previous timestep.  May be ignored by a stationary solver.
         :param unext: The purported exact or experimental solution.
-        :return: The residual b - Au."""
+        :return: The residual Au - b."""
 
     @abstractmethod
     def correct(self, params: Parameters, uprev: Vector, sigma: Vector) -> Vector:

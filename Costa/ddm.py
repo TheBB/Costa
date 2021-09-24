@@ -24,4 +24,4 @@ class Omniscient(DataModel):
         uprev = self.solutions.pop(0)
         unext = self.solutions[0]
         sigma = self.pbm.residual(params, uprev, unext)
-        return -np.array(sigma)
+        return np.array(sigma)
