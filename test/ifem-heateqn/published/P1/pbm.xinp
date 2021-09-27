@@ -13,13 +13,13 @@
     <boundaryconditions>
       <dirichlet set="Boundary" comp="1" type="expression">t + 0.5*ALPHA*x*x</dirichlet>
     </boundaryconditions>
-    <source type="expression">1-ALPHA</source>
+
     <anasol type="expression">
       <primary>t + 0.5*ALPHA*x*x</primary>
       <secondary>ALPHA*x</secondary>
     </anasol>
   </heatequation>
 
-  <timestepping start="0.0" end="5.0" dt="0.1" type="be"/>
+  <timestepping start="0.0" end="5.0" dt="0.001" type="be"/>
 
 </simulation>
