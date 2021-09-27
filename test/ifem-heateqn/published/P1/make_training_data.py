@@ -1,8 +1,6 @@
 import IFEM_CoSTA
 import numpy as np
-import matplotlib.pyplot as plt
 import splipy as sp
-import sys
 from os import mkdir, path, listdir
 import sys, os
 from tqdm import tqdm
@@ -79,7 +77,7 @@ def main():
 
                 with stdout_redirected():
                     u_ex_next = exact.anasol(mu)['primary']
-                    u_h_next  = pbm.predict(mu, u_h_prev)
+                    u_h_next  = pbm.predict(mu, u_ex_prev)
                     sigma     = pbm.residual(mu, u_ex_prev, u_ex_next)
 
                 X[i,:] = u_h_next
@@ -97,43 +95,6 @@ def main():
 
     return
 
-
-    ########################################################################
-
-    #             CREATE THE TEST DATA                                     #
-
-    ########################################################################
-    # initialize the simulation
-    # This actually does something else as it splits the data into chunks
-    ndof = 20
-    nt   = 5001
-    X = np.zeros((ndof  , nt))
-    Y = np.zeros((ndof  , nt))
-    for alpha in test:
-        # set up physics based model
-        full = IFEM_CoSTA.HeatEquation('P1.xinp')
-        mu = {'dt':0.001, 't':0.0, 'ALPHA':alpha}
-        uprev = full.initial_condition(mu)
-        zeros = [0.0]*full.ndof
-        i = 0
-
-        # run time iterations
-        for n in range(5001):
-            upred = full.predict(mu, uprev)
-
-            sigma = full.residual(mu, uprev, upred)
-            X[:,i] = upred
-            Y[:,i] = sigma
-            i += 1
-
-            # this is training, so we have the correct residual
-            ucorr = full.correct(mu, uprev, zeros)
-            uprev = ucorr
-            mu['t'] += mu['dt']
-
-        # save results to file
-        np.save(f'test/X_a{int(alpha*10)}.npy', X.T)
-        np.save(f'test/Y_a{int(alpha*10)}.npy', Y.T)
 
 if __name__ == ('__main__'):
     main()
