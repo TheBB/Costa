@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+
+<simulation>
+
+  <geometry dim="1" sets="true">
+  <!--
+    <raiseorder patch="1" u="1"/>
+  -->
+    <refine type="uniform" patch="1" u="18"/>
+  </geometry>
+
+  <heatequation>
+    <boundaryconditions>
+      <dirichlet set="Boundary" comp="1" type="anasol"/>
+    </boundaryconditions>
+    <diffusivity type="expression">5-ALPHA*x/(1+t)</diffusivity>
+    <source type="expression">ALPHA*(x-ALPHA)/(1+t)/(1+t)</source>
+    <anasol type="expression">
+      <primary>5-ALPHA*x/(1+t)</primary>
+      <secondary>-(5-ALPHA*x/(1+t))*ALPHA/(1+t)</secondary>
+    </anasol>
+  </heatequation>
+
+  <timestepping start="0.0" end="5.0" dt="0.001" type="be"/>
+
+</simulation>
