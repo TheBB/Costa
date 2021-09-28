@@ -22,12 +22,11 @@ alphas = [-.5, .7, 1.5, 2.5  ]
 for alpha in alphas:
 
     pbm   = IFEM_CoSTA.HeatEquation(f'{example_name}/pbm.xinp', verbose=False)
-    exact = IFEM_CoSTA.HeatEquation(f'{example_name}/{example_name}.xinp', verbose=False)
     mu    = {'dt':0.001, 't':0.0, 'ALPHA':alpha}
     u_pbm_prev = pbm.anasol(mu)['primary']
     u_ddm_prev = pbm.anasol(mu)['primary']
     u_ham_prev = pbm.anasol(mu)['primary']
-    u_exact_prev = np.array(exact.anasol(mu)['primary'])
+    u_exact_prev = np.array(pbm.anasol(mu)['primary'])
     sigma = np.zeros(pbm.ndof)
     zeros = np.zeros(pbm.ndof)
 
@@ -54,8 +53,8 @@ for alpha in alphas:
         sigma = ham.predict(np.array(u_ham_pred, ndmin=2)).flatten()
 
         # update the next step with a corrector
-        u_exact_prev[:]  = exact.anasol(mu)['primary']
-        u_pbm_prev[:]    = pbm.correct(mu, u_pbm_prev, zeros)
+        u_exact_prev[:]  = pbm.anasol(mu)['primary']
+        u_pbm_prev[:]    = pbm.predict(mu, u_pbm_prev)
         u_ham_prev[:]    = pbm.correct(mu, u_ham_prev, sigma)
         u_ddm_prev       = ddm.predict(u_ddm_prev)
         u_ddm_prev[0,0]  = ud[0]

@@ -7,38 +7,6 @@ from tqdm import tqdm
 from contextlib import contextmanager
 
 
-### Hack to supress stdout from IFEM
-
-def fileno(file_or_fd):
-    fd = getattr(file_or_fd, 'fileno', lambda: file_or_fd)()
-    if not isinstance(fd, int):
-        raise ValueError("Expected a file (`.fileno()`) or a file descriptor")
-    return fd
-
-@contextmanager
-def stdout_redirected(to=os.devnull, stdout=None):
-    if stdout is None:
-       stdout = sys.stdout
-
-    stdout_fd = fileno(stdout)
-    # copy stdout_fd before it is overwritten
-    #NOTE: `copied` is inheritable on Windows when duplicating a standard stream
-    with os.fdopen(os.dup(stdout_fd), 'wb') as copied:
-        stdout.flush()  # flush library buffers that dup2 knows nothing about
-        try:
-            os.dup2(fileno(to), stdout_fd)  # $ exec >&to
-        except ValueError:  # filename
-            with open(to, 'wb') as to_file:
-                os.dup2(to_file.fileno(), stdout_fd)  # $ exec > to
-        try:
-            yield stdout # allow code to be run with the redirected stdout
-        finally:
-            # restore stdout to its previous value
-            #NOTE: dup2 makes stdout_fd inheritable unconditionally
-            stdout.flush()
-            os.dup2(copied.fileno(), stdout_fd)  # $ exec >&copied
-
-
 def main(*argv):
     example_name = argv[1]
     
@@ -67,20 +35,17 @@ def main(*argv):
         for alpha in tqdm(alpha_values):
 
             # set up physics based model
-            with stdout_redirected():
-                exact = IFEM_CoSTA.HeatEquation(f'{example_name}/{example_name}.xinp')
-                pbm   = IFEM_CoSTA.HeatEquation(f'{example_name}/pbm.xinp') # source term removed wrt above
-                mu = {'dt':0.001, 't':0.0, 'ALPHA':alpha}
-                u_ex_prev = exact.anasol(mu)['primary']
+            pbm   = IFEM_CoSTA.HeatEquation(f'{example_name}/pbm.xinp', verbose=False) # source term removed wrt above
+            mu = {'dt':0.001, 't':0.0, 'ALPHA':alpha}
+            u_ex_prev = pbm.anasol(mu)['primary']
 
             # run time iterations
             for n in tqdm(range(nt), leave=False):
                 mu['t'] += mu['dt']
 
-                with stdout_redirected():
-                    u_ex_next = exact.anasol(mu)['primary']
-                    u_h_next  = pbm.predict(mu, u_ex_prev)
-                    sigma     = pbm.residual(mu, u_ex_prev, u_ex_next)
+                u_ex_next = pbm.anasol(mu)['primary']
+                u_h_next  = pbm.predict(mu, u_ex_prev)
+                sigma     = pbm.residual(mu, u_ex_prev, u_ex_next)
 
                 X[i,:] = u_h_next
                 Y[i,:] = sigma
