@@ -10,7 +10,7 @@ nsteps = 10
 dt = 1e-1
 
 # Initialize our physics-based model
-pbm = Ifem.HeatEquation('square.xinp')
+pbm = Ifem.HeatEquation('square.xinp', verbose=False)
 
 # Create a set of arbitrary and random solutions
 i_ndofs = pbm.ndof - len(pbm.dirichlet_dofs())
