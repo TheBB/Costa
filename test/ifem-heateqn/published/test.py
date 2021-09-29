@@ -17,7 +17,6 @@ spline = sp.Curve()
 spline.refine(18) # for a grand total of 20 controlpoints with p=1
 spline = spline.set_dimension(1)
 
-
 alphas = [-.5, .7, 1.5, 2.5  ]
 for alpha in alphas:
 
@@ -64,6 +63,9 @@ for alpha in alphas:
         ham_err[n] = np.linalg.norm(u_ham_prev           - u_exact_prev) / np.linalg.norm(u_exact_prev)
         ddm_err[n] = np.linalg.norm(u_ddm_prev.flatten() - u_exact_prev) / np.linalg.norm(u_exact_prev)
 
+    print(f'mu = {mu}')
+    u_ex = pbm.anasol(mu)['primary']
+    print(f'pbm.anasol(mu)[\'primary\'] = {u_ex}')
 
     plt.figure(figsize=(12,6))
 
