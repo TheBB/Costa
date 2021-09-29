@@ -1,5 +1,6 @@
 from functools import cached_property
-from typing import Iterable
+
+from typing import Iterable, Dict, Optional
 
 import numpy as np
 
@@ -41,19 +42,21 @@ class Timestepper:
         """
         return util.to_internal(vector, mask=self.internal_mask)
 
-    def solve(self, initial: np.ndarray, dt: float, nsteps: int) -> Iterable[np.ndarray]:
+    def solve(self, initial: np.ndarray, dt: float, nsteps: int, **params) -> Iterable[np.ndarray]:
         """Solve the corrected source-term problem for a given number of
         timesteps.
 
         :param initial: Initial condition
         :param dt: Time step
         :param nsteps: Number of timesteps to make
+        :param params: Other solver parameters
         :return: Iterator of solution vectors
         """
         yield initial
 
-        params = {'dt': dt}
+        params = {**params, 'dt': dt, 't': 0.0}
         for _ in range(nsteps):
+            params['t'] += dt
             predicted = self.pbm.predict(params, initial)
             residual = self.ddm(params, predicted)
             initial = self.pbm.correct(params, initial, residual)
