@@ -28,21 +28,20 @@ for alpha in alphas:
     u_ham_prev = pbm.anasol(mu)['primary']
     u_exact_prev = np.array(pbm.anasol(mu)['primary'])
     sigma = np.zeros(pbm.ndof)
-    zeros = np.zeros(pbm.ndof)
 
     # accumulate error as a function of time steps
     pbm_err = np.zeros(5000)
     ham_err = np.zeros(5000)
     ddm_err = np.zeros(5000)
-    
+
     # reshape data to fit into tensorflow
     u_ddm_prev = np.array(u_ddm_prev, ndmin=2)
-                                                                               
+
     # run time iterations
     for n in tqdm(range(5000)):
         # update values
         mu['t'] += mu['dt']
-        
+
         # fetch the boundary conditions
         ud = pbm.anasol(mu)['primary']
 
@@ -67,25 +66,25 @@ for alpha in alphas:
 
 
     plt.figure(figsize=(12,6))
-    
+
     plt.semilogy(ham_err, 'g-')
-    plt.semilogy(ddm_err, 'r-')
-    plt.semilogy(pbm_err, 'b-')
+    plt.semilogy(ddm_err, 'b-')
+    plt.semilogy(pbm_err, 'r-')
     plt.legend(['HAM', 'DDM', 'PBM'])
     plt.title(f'Relative errors for alpha={alpha}')
     plt.xlabel('Time level')
     plt.ylabel('Relative L2-error')
     plt.savefig(f'{example_name}/test/{example_name}_error_a{int(alpha*10)}.png')
 
-        
+
     plt.figure(figsize=(12,6))
-    
+
     x = np.linspace(0,1,20)
     N = spline.bases[0](x)
     plt.plot(x,(N@u_exact_prev).T, 'k-', mfc='none')
     plt.plot(x,(N@u_ham_prev).T, 'gd ', mfc='none')
-    plt.plot(x,(N@u_ddm_prev.flatten()).T, 'ro ', mfc='none')
-    plt.plot(x,(N@u_pbm_prev).T, 'bs ', mfc='none')
+    plt.plot(x,(N@u_ddm_prev.flatten()).T, 'bs ', mfc='none')
+    plt.plot(x,(N@u_pbm_prev).T, 'ro ', mfc='none')
     plt.legend(['exact', 'HAM', 'DDM', 'PBM'])
     plt.xlabel('x [m]')
     plt.xlabel('T [C]')
