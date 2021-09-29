@@ -1,9 +1,23 @@
-from typing import List
+from pathlib import Path
 
+from typing import List, Union
+
+from keras.models import load_model
 import numpy as np
 
-from . import util
 from .api import PhysicsModel, DataModel
+
+
+class Keras(DataModel):
+    """A data-driven model backed by a Keras neural network."""
+
+    def __init__(self, filename: Union[str, Path]):
+        model = load_model(filename)
+        assert model
+        self.model = model
+
+    def __call__(self, params, upred: np.ndarray) -> np.ndarray:
+        return self.model.predict(np.array(upred).reshape(1, -1)).reshape(-1)
 
 
 class Omniscient(DataModel):
