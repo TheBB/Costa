@@ -13,10 +13,9 @@
     <boundaryconditions>
       <dirichlet set="Boundary" comp="1" type="anasol"/>
     </boundaryconditions>
-
-    <source type="expression">-exp(-t)*(ALPHA+2*x + (0.75-1.5*x)*above(x,.5))</source>
+    <source type="expression">-exp(-t)*if(above(x,0.5),ALPHA+0.75+0.5*x,ALPHA+2*x)</source>
     <anasol type="expression">
-      <primary>exp(-t)*(ALPHA+2*x + (0.75-1.5*x)*above(x,.5))</primary>
+      <primary>-exp(-t)*if(above(x,0.5),ALPHA+0.75+0.5*x,ALPHA+2*x)</primary>
     </anasol>
   </heatequation>
 

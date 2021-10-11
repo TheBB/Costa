@@ -13,10 +13,10 @@
     <boundaryconditions>
       <dirichlet set="Boundary" comp="1" type="anasol"/>
     </boundaryconditions>
-    <source type="expression">2*PI*(cos(2*PI*t+ALPHA)+2*PI*sin(2*PI*t+ALPHA))*cos(2*PI*x)</source>
+    <source type="expression">1/(2*sqrt(t+ALPHA+1))-84*x*x-42*x+28</source>
     <anasol type="expression">
-      <primary>1+sin(2*PI*t + ALPHA)*cos(2*PI*x)</primary>
-      <secondary>-2*PI*sin(2*PI*x)*sin(2*PI*t+ALPHA)</secondary>
+      <primary>sqrt(t+ALPHA+1)+7*x*x*(x-1)*(x+2)</primary>
+      <secondary>7*x*(4*x*x+3*x-4)</secondary>
     </anasol>
   </heatequation>
 
