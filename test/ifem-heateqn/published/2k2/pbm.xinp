@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+
+<simulation>
+
+  <geometry dim="2" sets="true">
+  <!--
+    <raiseorder patch="1" u="1"/>
+  -->
+    <refine type="uniform" patch="1" u="18" v="18"/>
+  </geometry>
+
+  <heatequation>
+    <boundaryconditions>
+      <dirichlet set="Boundary" comp="1" type="anasol"/>
+    </boundaryconditions>
+    <source type="expression">cos(2*PI*x)*cos(4*PI*y)*(1+40*PI*PI*(t+1)*(1+sin(PI*x)*sin(4*PI*y)))</source>
+    <anasol type="expression">
+      <primary>ALPHA + (t+1)*cos(2*PI*x)*cos(4*PI*y)</primary>
+      <secondary>-(t+1)*2*PI*sin(2*PI*x)*cos(4*PI*y) | -(t+1)*cos(2*PI*x)*4*PI*sin(4*PI*y)</secondary>
+    </anasol>
+  </heatequation>
+
+  <discretization>
+    <nGauss>2</nGauss>
+  </discretization>
+
+  <timestepping start="0.0" end="5.0" dt="0.1" type="be"/>
+
+</simulation>

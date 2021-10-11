@@ -2,23 +2,28 @@
 
 <simulation>
 
-  <geometry dim="1" sets="true">
+  <geometry dim="2" sets="true">
   <!--
     <raiseorder patch="1" u="1"/>
   -->
-    <refine type="uniform" patch="1" u="18"/>
+    <refine type="uniform" patch="1" u="18" v="18"/>
   </geometry>
 
   <heatequation>
     <boundaryconditions>
       <dirichlet set="Boundary" comp="1" type="anasol"/>
     </boundaryconditions>
-    <source type="expression">2*PI*(cos(2*PI*t+ALPHA)+2*PI*sin(2*PI*t+ALPHA))*cos(2*PI*x)</source>
+    <source type="expression">-(1 + ALPHA + 2*x + 4*y)</source>
+    <diffusivity type="expression">1 + x + y</diffusivity>
     <anasol type="expression">
-      <primary>1+sin(2*PI*t + ALPHA)*cos(2*PI*x)</primary>
-      <secondary>-2*PI*sin(2*PI*x)*sin(2*PI*t+ALPHA)</secondary>
+      <primary>t + ALPHA*x + y*y</primary>
+      <secondary> ALPHA | 2*y</secondary>
     </anasol>
   </heatequation>
+
+  <discretization>
+    <nGauss>2</nGauss>
+  </discretization>
 
   <timestepping start="0.0" end="5.0" dt="0.1" type="be"/>
 
