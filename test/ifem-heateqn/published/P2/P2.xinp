@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+
+<simulation>
+
+  <geometry dim="1" sets="true">
+  <!--
+    <raiseorder patch="1" u="1"/>
+  -->
+    <refine type="uniform" patch="1" u="18"/>
+  </geometry>
+
+  <heatequation>
+    <boundaryconditions>
+      <dirichlet set="Boundary" comp="1" type="anasol"/>
+    </boundaryconditions>
+    <source type="expression">1/2/sqrt(t+ALPHA+1)-120*x*x - 60*x + 40</source>
+    <anasol type="expression">
+      <primary>sqrt(t+ALPHA+1)+10*x*x*(x-1)*(x+2)</primary>
+      <secondary>40*x*x*x + 30*x*x - 40*x</secondary>
+    </anasol>
+  </heatequation>
+
+  <timestepping start="0.0" end="5.0" dt="0.001" type="be"/>
+
+</simulation>

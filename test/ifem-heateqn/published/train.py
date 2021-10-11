@@ -1,6 +1,6 @@
 from keras.models import Sequential
 from keras.layers import Dense, LeakyReLU
-from tensorflow.keras.optimizers import Adam
+from keras.optimizers import Adam
 from keras.callbacks import EarlyStopping
 import sys
 import numpy as np
@@ -14,7 +14,7 @@ def make_model(): # create multiple identical models for comparison purposes
         model.add(LeakyReLU(0.01))
     model.add(Dense(20,))
 
-    opt = Adam(learning_rate=1e-5)
+    opt = Adam(lr=1e-5)
     model.compile(optimizer=opt, loss='mean_squared_error', metrics=['mae', 'mse'])
     return model
 
