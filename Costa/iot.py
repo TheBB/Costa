@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import time
 from typing import Dict
 
@@ -43,6 +44,7 @@ class IotServer:
         else:
             payload = {'error': f"Unknown method '{request.name}'"}
             status = 404
+        payload['time'] = datetime.now(timezone.utc).isoformat()
         response = MethodResponse.create_from_method_request(request, status, payload)
         self.client.send_method_response(response)
 
@@ -58,6 +60,7 @@ class IotClient:
         self.registry = IoTHubRegistryManager(connection_str)
 
     def invoke(self, device: str, method: str, payload: Dict) -> Dict:
+        payload = {**payload, 'time': datetime.now(timezone.utc).isoformat()}
         method = CloudToDeviceMethod(method_name=method, payload=payload)
         response = self.registry.invoke_device_method(device, method)
         if response is None:
