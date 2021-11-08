@@ -15,8 +15,12 @@ from .api import PhysicsModel, DataModel, DataTrainer
 
 class KerasTrainer(DataTrainer):
 
+    model: Optional[Model] = None
     x: Optional[np.ndarray] = None
     y: Optional[np.ndarray] = None
+
+    def __init__(self, model: Optional[Model] = None):
+        self.model = model
 
     def append(self, x: np.ndarray, y: np.ndarray):
         if x.ndim == 1:
@@ -31,7 +35,9 @@ class KerasTrainer(DataTrainer):
         self.x = np.append(self.x, x, 0)
         self.y = np.append(self.y, y, 0)
 
-    def train(self, nlayers: int = 4, layer_size_factor: float = 4) -> Keras:
+    def ensure_model(self, nlayers: int = 4, layer_size_factor: float = 4):
+        if self.model is not None:
+            return
         assert self.x is not None
         assert self.y is not None
         inshape, outshape = self.x.shape[1], self.y.shape[1]
@@ -44,13 +50,20 @@ class KerasTrainer(DataTrainer):
             model.add(LeakyReLU(0.01))
         model.add(Dense(outshape))
 
-        optimizer = Adam(learning_rate=1e-5)
-        model.compile(optimizer=optimizer, loss='mean_squared_error', metrics=['mae', 'mse'])
+        self.model = model
+
+    def train(self, learing_rate: float = 1e-5, **kwargs) -> Keras:
+        self.ensure_model()
+        assert self.x is not None
+        assert self.y is not None
+        assert self.model is not None
+
+        optimizer = Adam(learning_rate=learing_rate)
+        self.model.compile(optimizer=optimizer, loss='mean_squared_error', metrics=['mae', 'mse'])
 
         monitor = EarlyStopping(patience=20)
-        model.fit(self.x, self.y, batch_size=32, epochs=100, validation_split=0.1, callbacks=[monitor])
-        print(model.summary())
-        return Keras(model)
+        self.model.fit(self.x, self.y, batch_size=32, epochs=100, validation_split=0.1, callbacks=[monitor])
+        return Keras(self.model)
 
 
 class Keras(DataModel):
@@ -72,6 +85,11 @@ class Keras(DataModel):
 
     def save(self, filename: Union[str, Path]):
         self.model.save(filename)
+
+    def retrain(self, x: np.ndarray, y: np.ndarray, learning_rate: float = 1e-8):
+        trainer = KerasTrainer(self.model)
+        trainer.append(x, y)
+        self.model = trainer.train(learing_rate=learning_rate)
 
 
 class Omniscient(DataModel):

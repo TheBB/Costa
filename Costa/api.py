@@ -66,9 +66,9 @@ class PhysicsModel(ABC):
 
 class DataModel(ABC):
 
-    @abstractclassmethod
     def from_file(cls, filename: Union[str, Path]) -> DataModel:
         """Load a data model from a file."""
+        raise NotImplementedError(f"from_file() not implemented for {cls}")
 
     @abstractmethod
     def __call__(self, params: Parameters, upred: Vector) -> Vector:
@@ -82,9 +82,13 @@ class DataModel(ABC):
         :return: Right-hand-side perturbation for use in PhysicModel.correct.
         """
 
-    @abstractmethod
     def save(self, filename: Union[str, Path]):
         """Save a data model to a file."""
+        raise NotImplementedError(f"save() not implemented for {self.__class__}")
+
+    def retrain(self, x: Matrix, y: Matrix, **kwargs):
+        """Retrain an already-trained model with new data."""
+        raise NotImplementedError(f"retrain() not implemented for {self.__class__}")
 
 
 class DataTrainer(ABC):
