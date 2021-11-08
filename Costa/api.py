@@ -1,4 +1,7 @@
-from abc import abstractmethod, abstractproperty, ABC
+from __future__ import annotations
+
+from abc import abstractmethod, abstractproperty, abstractclassmethod, ABC
+from pathlib import Path
 
 from typing import Dict, Union, List
 
@@ -7,6 +10,7 @@ import numpy as np
 
 Parameters = Dict[str, Union[float, List[float]]]
 Vector = np.ndarray
+Matrix = np.ndarray
 
 
 class PhysicsModel(ABC):
@@ -62,6 +66,10 @@ class PhysicsModel(ABC):
 
 class DataModel(ABC):
 
+    @abstractclassmethod
+    def from_file(cls, filename: Union[str, Path]) -> DataModel:
+        """Load a data model from a file."""
+
     @abstractmethod
     def __call__(self, params: Parameters, upred: Vector) -> Vector:
         """Calculate a right-hand side perturbation to use for a corrected
@@ -73,3 +81,18 @@ class DataModel(ABC):
             PhysicsModel.predict).
         :return: Right-hand-side perturbation for use in PhysicModel.correct.
         """
+
+    @abstractmethod
+    def save(self, filename: Union[str, Path]):
+        """Save a data model to a file."""
+
+
+class DataTrainer(ABC):
+
+    @abstractmethod
+    def append(self, x: Matrix, y: Matrix):
+        """Add training data."""
+
+    @abstractmethod
+    def train(self) -> DataModel:
+        """Train the model."""

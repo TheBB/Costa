@@ -1,23 +1,77 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-from typing import List, Union
+from typing import List, Union, Optional
 
-from keras.models import load_model
+from tensorflow.keras.models import load_model, Sequential, Model
+from tensorflow.keras.layers import Dense, LeakyReLU
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
 import numpy as np
 
-from .api import PhysicsModel, DataModel
+from .api import PhysicsModel, DataModel, DataTrainer
+
+
+class KerasTrainer(DataTrainer):
+
+    x: Optional[np.ndarray] = None
+    y: Optional[np.ndarray] = None
+
+    def append(self, x: np.ndarray, y: np.ndarray):
+        if x.ndim == 1:
+            x = x.reshape(1, -1)
+        if y.ndim == 1:
+            y = y.reshape(1, -1)
+        assert x.shape[0] == y.shape[0]
+        if self.x is None:
+            self.x = x
+            self.y = y
+            return
+        self.x = np.append(self.x, x, 0)
+        self.y = np.append(self.y, y, 0)
+
+    def train(self, nlayers: int = 4, layer_size_factor: float = 4) -> Keras:
+        assert self.x is not None
+        assert self.y is not None
+        inshape, outshape = self.x.shape[1], self.y.shape[1]
+        midshape = int(layer_size_factor * inshape)
+
+        model = Sequential()
+        model.add(Dense(inshape))
+        for _ in range(nlayers):
+            model.add(Dense(midshape))
+            model.add(LeakyReLU(0.01))
+        model.add(Dense(outshape))
+
+        optimizer = Adam(learning_rate=1e-5)
+        model.compile(optimizer=optimizer, loss='mean_squared_error', metrics=['mae', 'mse'])
+
+        monitor = EarlyStopping(patience=20)
+        model.fit(self.x, self.y, batch_size=32, epochs=100, validation_split=0.1, callbacks=[monitor])
+        print(model.summary())
+        return Keras(model)
 
 
 class Keras(DataModel):
     """A data-driven model backed by a Keras neural network."""
 
-    def __init__(self, filename: Union[str, Path]):
+    model: Model
+
+    @classmethod
+    def from_file(cls, filename: Union[str, Path]) -> Keras:
         model = load_model(filename)
         assert model
+        return cls(model)
+
+    def __init__(self, model: Model):
         self.model = model
 
     def __call__(self, params, upred: np.ndarray) -> np.ndarray:
-        return self.model.predict(np.array(upred).reshape(1, -1)).reshape(-1)
+        return self.model(np.array(upred).reshape(1, -1), training=False).numpy().reshape(-1)
+
+    def save(self, filename: Union[str, Path]):
+        self.model.save(filename)
 
 
 class Omniscient(DataModel):

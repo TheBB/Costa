@@ -1,7 +1,7 @@
-from keras.models import Sequential
-from keras.layers import Dense, LeakyReLU
-from keras.optimizers import Adam
-from keras.callbacks import EarlyStopping
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LeakyReLU
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -34,6 +34,8 @@ Xv   = np.load(f'{example_name}/validation/X.npy')
 Yv   = np.load(f'{example_name}/validation/Y.npy')
 Xexv = np.load(f'{example_name}/validation/Xex.npy')
 Yexv = np.load(f'{example_name}/validation/Yex.npy')
+
+print(X.shape, Y.shape, Xv.shape, Yv.shape)
 
 
 early_stopping_monitor = EarlyStopping(patience=20)
