@@ -60,13 +60,22 @@ def make_training_data(problem: Path, timesteps: int, final: float):
 
 
 @main.command()
+@click.option('--timesteps', '-t', type=int, default=5000)
+@click.option('--final', '-f', type=float, default=5.0)
 @click.argument('problem', type=Problem)
-def train(problem: Path):
-    x = np.load(problem / 'source' / 'x.npy')
-    y = np.load(problem / 'source' / 'y.npy')
+def train(problem: Path, timesteps: int, final: float):
+    pbm = Ifem.HeatEquation(str(problem / 'pbm.xinp'), verbose=False)
+    trainer = KerasTrainer(pbm)
 
-    trainer = KerasTrainer()
-    trainer.append(x, y)
+    for alpha in tqdm(source_alphas):
+        mu = {'ALPHA': alpha, 't': 0.0, 'dt': final/timesteps}
+        uprev = pbm.anasol(mu)['primary']
+        for _ in tqdm(range(timesteps), leave=False):
+            mu['t'] += mu['dt']
+            unext = pbm.anasol(mu)['primary']
+            trainer.append(mu, uprev, unext)
+            uprev = unext
+
     ddm = trainer.train()
     ddm.save(problem / 'ddm.h5')
 

@@ -86,15 +86,11 @@ class DataModel(ABC):
         """Save a data model to a file."""
         raise NotImplementedError(f"save() not implemented for {self.__class__}")
 
-    def retrain(self, x: Matrix, y: Matrix, **kwargs):
-        """Retrain an already-trained model with new data."""
-        raise NotImplementedError(f"retrain() not implemented for {self.__class__}")
-
 
 class DataTrainer(ABC):
 
     @abstractmethod
-    def append(self, x: Matrix, y: Matrix):
+    def append(self, x: Vector, y: Vector):
         """Add training data."""
 
     @abstractmethod
