@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import time
-from typing import Dict, Optional
+
+from typing import Dict, Optional, Union
 
 from azure.eventhub import EventHubConsumerClient, EventData
 from azure.iot.device import IoTHubDeviceClient, MethodResponse, MethodRequest
@@ -9,7 +11,7 @@ from azure.iot.hub import IoTHubRegistryManager
 from azure.iot.hub.protocol.models.cloud_to_device_method import CloudToDeviceMethod
 import numpy as np
 
-from .api import DataModel, PhysicsModel
+from .api import DataModel, DataTrainer, PhysicsModel
 
 
 class NumpyArrayEncoder(json.JSONEncoder):
@@ -33,7 +35,13 @@ class IotServer:
     def __init__(self, connection_str: str):
         self.client = IoTHubDeviceClient.create_from_connection_string(connection_str)
         self.client.on_method_request_received = self.method_called
+
+    def __enter__(self):
         self.client.connect()
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        self.client.shutdown()
 
     def wait(self):
         try:
@@ -41,8 +49,6 @@ class IotServer:
                 time.sleep(0.1)
         except KeyboardInterrupt:
             pass
-        finally:
-            self.client.shutdown()
 
     def method_called(self, request: MethodRequest):
         func = f'on_{request.name}'
@@ -76,15 +82,17 @@ class IotServer:
 
 class IotClient:
 
-    registry: IoTHubRegistryManager
+    registry: Optional[IoTHubRegistryManager] = None
     hub: Optional[EventHubConsumerClient] = None
 
-    def __init__(self, cstr: str, hstr: Optional[str] = None):
-        self.registry = IoTHubRegistryManager(cstr)
+    def __init__(self, rstr: Optional[str] = None, hstr: Optional[str] = None):
+        if rstr:
+            self.registry = IoTHubRegistryManager(rstr)
         if hstr:
             self.hub = EventHubConsumerClient.from_connection_string(hstr, '$default')
 
     def invoke(self, device: str, method: str, payload: Dict) -> Dict:
+        assert self.registry
         payload = {**payload, 'time': datetime.now(timezone.utc).isoformat()}
         payload = json.dumps(payload, cls=NumpyArrayEncoder)
         method = CloudToDeviceMethod(method_name=method, payload=payload)
@@ -161,7 +169,7 @@ class PbmClient(PhysicsModel, IotClient):
 
     def __init__(self, connection_str: str, device: str):
         self.device = device
-        IotClient.__init__(self, connection_str)
+        IotClient.__init__(self, rstr=connection_str)
 
     @property
     def ndof(self):
@@ -192,7 +200,6 @@ class DdmServer(IotServer):
         super().__init__(connection_str)
 
     def on_predict(self, payload: Dict) -> Dict:
-        # print(payload['upred'], type(payload['upred']))
         return {
             'sigma': self.ddm(payload['params'], payload['upred'])
         }
@@ -208,3 +215,71 @@ class DdmClient(DataModel, IotClient):
 
     def __call__(self, params, upred):
         return self.invoke(self.device, 'predict', {'params': params, 'upred': upred})['sigma']
+
+
+class PhysicalDevice(IotServer):
+
+    def emit_state(self, params: Dict, state: np.ndarray):
+        self.emit('new_state', {'params': params, 'state': state})
+
+    def emit_clean(self):
+        self.emit('clean_state', {})
+
+
+class DdmTrainer(IotClient):
+
+    trainer: DataTrainer
+    ddm_server: Optional[DdmServer] = None
+    connection_string: str
+
+    prev_state: Optional[np.ndarray] = None
+
+    retrain_frequency: int
+    state_count: int
+
+    train_kwargs: Dict
+    filename: Union[str, Path]
+
+    def __init__(
+        self,
+        trainer: DataTrainer,
+        hstr: str,
+        cstr: str,
+        filename: Union[str, Path] = None,
+        retrain_frequency: int = 5000,
+        **kwargs
+    ):
+        super().__init__(hstr=hstr)
+        self.trainer = trainer
+        self.connection_string = cstr
+        self.retrain_frequency = retrain_frequency
+        self.state_count = 0
+        self.train_kwargs = kwargs
+        self.filename = filename
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        if self.ddm_server:
+            self.ddm_server.__exit__()
+
+    def retrain(self):
+        ddm = self.trainer.train()
+        if self.filename:
+            ddm.save(self.filename)
+        if self.ddm_server:
+            self.ddm_server.__exit__()
+        self.ddm_server = DdmServer(self.connection_string, ddm).__enter__()
+
+    def on_new_state(self, payload: Dict):
+        state = np.array(payload['state'])
+        if self.prev_state is not None:
+            self.trainer.append(payload['params'], self.prev_state, state)
+            self.state_count += 1
+            if self.state_count % self.retrain_frequency == 0:
+                self.retrain()
+        self.prev_state = state
+
+    def on_clean_state(self, _):
+        self.prev_state = None

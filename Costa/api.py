@@ -66,6 +66,7 @@ class PhysicsModel(ABC):
 
 class DataModel(ABC):
 
+    @abstractclassmethod
     def from_file(cls, filename: Union[str, Path]) -> DataModel:
         """Load a data model from a file."""
         raise NotImplementedError(f"from_file() not implemented for {cls}")
