@@ -16,47 +16,9 @@ source_alphas = [.1, .2, .3, .4, .5, .6, .8, .9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.6, 1
 test_alphas = [-.5, .7, 1.5, 2.5]
 
 
-def _make_training_data(pbm, mu, nsteps: int, final: float):
-    mu = {**mu, 'dt': final/nsteps, 't': 0.0}
-    uprev = pbm.anasol(mu)['primary']
-    x = np.empty((nsteps, pbm.ndof))
-    y = np.empty((nsteps, pbm.ndof))
-
-    for i in tqdm(range(nsteps), leave=False):
-        mu['t'] += mu['dt']
-        unext = pbm.anasol(mu)['primary']
-        x[i] = pbm.predict(mu, uprev)
-        y[i] = pbm.residual(mu, uprev, unext)
-        uprev = unext
-
-    return x, y
-
-
 @click.group()
 def main():
     pass
-
-
-@main.command()
-@click.option('--timesteps', '-t', type=int, default=5000)
-@click.option('--final', '-f', type=float, default=5.0)
-@click.argument('problem', type=Problem)
-def make_training_data(problem: Path, timesteps: int, final: float):
-    it = zip([source_alphas, test_alphas], ['source', 'test'])
-    for alphas, name in it:
-        print(f"Creating {problem}/{name} dataset")
-        (problem / name).mkdir(exist_ok=True)
-
-        xs, ys = [], []
-        for alpha in tqdm(alphas):
-            pbm = Ifem.HeatEquation(str(problem / 'pbm.xinp'), verbose=False)
-            mu = {'ALPHA': alpha}
-            x, y = _make_training_data(pbm, mu, timesteps, final)
-            xs.append(x)
-            ys.append(y)
-
-        np.save(problem / name / 'x.npy', np.vstack(xs))
-        np.save(problem / name / 'y.npy', np.vstack(ys))
 
 
 @main.command()
@@ -99,4 +61,3 @@ def test(problem: Path, timesteps: int, final: float):
 
 if __name__ == '__main__':
     main()
-
