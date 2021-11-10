@@ -20,6 +20,10 @@
     </anasol>
   </heatequation>
 
+  <initialcondition field="temperature" level="0" type="expression">
+    0.5 * ALPHA * x * x
+  </initialcondition>
+
   <timestepping start="0.0" end="5.0" dt="0.001" type="be"/>
 
 </simulation>
