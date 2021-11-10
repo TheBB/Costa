@@ -1,11 +1,14 @@
-from functools import cached_property
-
 from typing import Iterable, Dict, Optional
 
 import numpy as np
 
 from . import util
 from .api import PhysicsModel, DataModel
+
+try:
+    from functools import cached_property
+except ImportError:
+    cached_property = property
 
 
 class Timestepper:
