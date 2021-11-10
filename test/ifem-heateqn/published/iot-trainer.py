@@ -13,11 +13,17 @@ hstr = os.getenv('COSTA_HSTR')
 
 
 @click.command()
-def main():
+@click.option('--interval', '-i', type=int, default=20)
+@click.argument('problem', type=Problem)
+def main(problem: Path, interval: int):
+    kwargs = {
+        'retrain_frequency': interval,
+        'filename': problem / 'ddm.h5',
+    }
     pbm = PbmClient(rstr, 'TestPbm')
     assert pbm.ping_remote()
     trainer = KerasTrainer(pbm)
-    with DdmTrainer(trainer, hstr, cstr, retrain_frequency=20) as trainer_client:
+    with DdmTrainer(trainer, hstr, cstr, **kwargs) as trainer_client:
         trainer_client.listen()
 
 
