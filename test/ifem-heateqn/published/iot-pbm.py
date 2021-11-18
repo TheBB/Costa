@@ -7,7 +7,7 @@ import IFEM_CoSTA as Ifem
 
 
 Problem = click.Path(file_okay=False, path_type=Path)
-cstr = os.getenv('COSTA_DDM_CSTR')
+cstr = os.getenv('COSTA_PBM_CSTR')
 
 
 @click.command()
