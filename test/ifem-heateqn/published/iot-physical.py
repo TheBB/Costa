@@ -1,8 +1,9 @@
 import click
 import os
 from pathlib import Path
-
 import time
+
+import numpy as np
 
 from Costa.iot import PhysicalDevice
 import IFEM_CoSTA as Ifem
@@ -25,7 +26,7 @@ def main(problem: Path, timesteps: int, final: float):
             for step in range(timesteps + 1):
                 t = step * final / timesteps
                 params = {'ALPHA': alpha, 't': t, 'dt': final / timesteps}
-                state = pbm.anasol(params)['primary']
+                state = np.array(pbm.anasol(params)['primary'])
                 device.emit_state(params, state)
                 time.sleep(1.0)
 

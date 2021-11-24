@@ -10,6 +10,8 @@ Problem = click.Path(file_okay=False, path_type=Path)
 cstr = os.getenv('COSTA_DDM_CSTR')
 rstr = os.getenv('COSTA_RSTR')
 hstr = os.getenv('COSTA_HSTR')
+sstr = os.getenv('COSTA_SSTR')
+container = os.getenv('COSTA_CONTAINER')
 
 
 @click.command()
@@ -20,10 +22,10 @@ def main(problem: Path, interval: int):
         'retrain_frequency': interval,
         'filename': problem / 'ddm.h5',
     }
-    pbm = PbmClient(rstr, 'TestPbm')
+    pbm = PbmClient(rstr, 'TestPbm', sstr=sstr, container=container)
     assert pbm.ping_remote()
     trainer = KerasTrainer(pbm)
-    with DdmTrainer(trainer, hstr, cstr, **kwargs) as trainer_client:
+    with DdmTrainer(trainer, hstr, cstr, sstr, container, **kwargs) as trainer_client:
         trainer_client.listen()
 
 
