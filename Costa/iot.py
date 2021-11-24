@@ -18,8 +18,20 @@ from .api import DataModel, DataTrainer, PhysicsModel
 class NumpyArrayEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
-            return obj.tolist()
+            return {
+                '_object': 'array',
+                '_shape': list(obj.shape),
+                '_data': list(obj),
+            }
         return super().default(self, obj)
+
+
+def numpy_array_decoder(data: Dict):
+    if '_object' not in data:
+        return data
+    if data['_object'] not in ('array',):
+        return data
+    return np.array(data['_data']).reshape(*data['_shape'])
 
 
 class InternalServerError(Exception):
@@ -83,7 +95,7 @@ class IotServer:
         status code 200.
         """
         func = f'on_{request.name}'
-        payload = json.loads(request.payload)
+        payload = json.loads(request.payload, object_hook=numpy_array_decoder)
         if hasattr(self, func):
             try:
                 payload_out = getattr(self, func)(payload)
@@ -167,7 +179,7 @@ class IotClient:
             raise Exception("Expected repsponse but got 'None'")
         if response.status not in (200, 404, 500):
             raise Exception(f"Unexpected status code: {response.status}")
-        payload = json.loads(response.payload)
+        payload = json.loads(response.payload, object_hook=numpy_array_decoder)
         if response.status == 500:
             raise InternalServerError(payload['error'])
         if response.status == 404:
@@ -192,7 +204,7 @@ class IotClient:
         method `on_name` where `name` is the message type, if one exists.  If it
         doesn't exist, the message is quietly ignored.
         """
-        payload = event_data.body_as_json()
+        payload = json.loads(event_data.body_as_str(), object_hook=numpy_array_decoder)
         try:
             func_name = payload['name']
         except KeyError:
@@ -387,7 +399,7 @@ class DdmTrainer(IotClient):
         self.ddm_server = DdmServer(self.connection_string, ddm).__enter__()
 
     def on_new_state(self, payload: Dict):
-        state = np.array(payload['state'])
+        state = payload['state']
         if self.prev_state is not None:
             self.trainer.append(payload['params'], self.prev_state, state)
             self.state_count += 1
