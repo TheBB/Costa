@@ -7,11 +7,13 @@ from Costa.runner import Timestepper
 
 
 rstr = os.getenv('COSTA_RSTR')
+sstr = os.getenv('COSTA_SSTR')
+container = os.getenv('COSTA_CONTAINER')
 
-pbm = PbmClient(rstr, 'TestPbm')
+pbm = PbmClient(rstr, 'TestPbm', sstr=sstr, container=container)
 assert pbm.ping_remote()
 
-ddm = DdmClient(rstr, 'TestDdm')
+ddm = DdmClient(rstr, 'TestDdm', sstr=sstr, container=container)
 assert ddm.ping_remote()
 
 timestepper = Timestepper(pbm, ddm)

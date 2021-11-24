@@ -1,14 +1,20 @@
 from datetime import datetime, timezone
+
+from functools import partial
+from io import BytesIO
 import json
 from pathlib import Path
 import time
+import uuid
 
 from typing import Dict, Optional, Union
 
+from azure.core.exceptions import AzureError
 from azure.eventhub import EventHubConsumerClient, EventData
 from azure.iot.device import IoTHubDeviceClient, MethodResponse, MethodRequest
 from azure.iot.hub import IoTHubRegistryManager
 from azure.iot.hub.protocol.models.cloud_to_device_method import CloudToDeviceMethod
+from azure.storage.blob import BlobClient
 from msrest.exceptions import HttpOperationError
 import numpy as np
 
@@ -16,22 +22,109 @@ from .api import DataModel, DataTrainer, PhysicsModel
 
 
 class NumpyArrayEncoder(json.JSONEncoder):
+
+    client: Optional[IoTHubDeviceClient]
+    conn_str: Optional[str]
+    container: Optional[str]
+    size_threshold: int
+
+    def __init__(
+        self,
+        client: Optional[IoTHubDeviceClient] = None,
+        conn_str: Optional[str] = None,
+        container: Optional[str] = None,
+        size_threshold: int = 8000,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.client = client
+        self.conn_str = conn_str
+        self.container = container
+        self.size_threshold = size_threshold
+
     def default(self, obj):
-        if isinstance(obj, np.ndarray):
+        if not isinstance(obj, np.ndarray):
+            return super().default(obj)
+
+        if obj.size <= self.size_threshold:
             return {
                 '_object': 'array',
                 '_shape': list(obj.shape),
                 '_data': list(obj),
             }
-        return super().default(self, obj)
+
+        path = str(uuid.uuid1())
+        if self.client is not None:
+            container, blob = self.upload_via_client(obj.data, path)
+        else:
+            container, blob = self.upload_via_cstr(obj.data, path)
+
+        z = {
+            '_object': 'array-file',
+            '_shape': list(obj.shape),
+            '_container': container,
+            '_blob': blob,
+        }
+        return z
+
+    def upload_via_client(self, data, path):
+        assert self.client, 'D'
+
+        storage_data = self.client.get_storage_info_for_blob(path)
+        assert storage_data is not None, 'E'
+
+        container_name = storage_data['containerName']
+        blob_name = storage_data['blobName']
+        corr_id = storage_data['correlationId']
+
+        sas_url = 'https://{hostname}/{container}/{blob}{token}'.format(
+            hostname=storage_data['hostName'],
+            container=container_name,
+            blob=blob_name,
+            token=storage_data['sasToken'],
+        )
+        blob_client = BlobClient.from_blob_url(sas_url)
+
+        try:
+            self.upload(data, blob_client)
+            self.client.notify_blob_upload_status(corr_id, True, 200, f'OK: {path}')
+        except AzureError as err:
+            self.client.notify_blob_upload_status(corr_id, False, err.status_code, str(err))
+            raise
+
+        return container_name, blob_name
+
+    def upload_via_cstr(self, data, path):
+        assert self.conn_str, 'F'
+        assert self.container, 'G'
+
+        blob_client = BlobClient.from_connection_string(
+            conn_str=self.conn_str,
+            container_name=self.container,
+            blob_name=path,
+        )
+
+        self.upload(data, blob_client)
+        return self.container, path
+
+    def upload(self, data, blob_client: BlobClient):
+        with BytesIO(data) as src:
+            with blob_client as tgt:
+                tgt.upload_blob(src, overwrite=True)
 
 
-def numpy_array_decoder(data: Dict):
+def numpy_array_decoder(data: Dict, sstr: Optional[str] = None):
     if '_object' not in data:
         return data
-    if data['_object'] not in ('array',):
-        return data
-    return np.array(data['_data']).reshape(*data['_shape'])
+    if data['_object'] == 'array':
+        return np.array(data['_data']).reshape(*data['_shape'])
+    if data['_object'] == 'array-file':
+        assert sstr, 'A'
+        with BlobClient.from_connection_string(sstr, data['_container'], data['_blob']) as blob_client:
+            contents = blob_client.download_blob().readall()
+        nelements = np.prod(data['_shape'])
+        return np.frombuffer(contents, count=nelements).reshape(*data['_shape']).copy()
 
 
 class InternalServerError(Exception):
@@ -57,10 +150,12 @@ class IotServer:
     """
 
     client: IoTHubDeviceClient
+    sstr: Optional[str]
 
-    def __init__(self, connection_str: str):
+    def __init__(self, connection_str: str, sstr: Optional[str] = None):
         self.client = IoTHubDeviceClient.create_from_connection_string(connection_str)
         self.client.on_method_request_received = self.method_called
+        self.sstr = sstr
 
     def __enter__(self):
         """Establish a connection to the Azure IoT hub."""
@@ -95,7 +190,8 @@ class IotServer:
         status code 200.
         """
         func = f'on_{request.name}'
-        payload = json.loads(request.payload, object_hook=numpy_array_decoder)
+        decoder = partial(numpy_array_decoder, sstr=self.sstr)
+        payload = json.loads(request.payload, object_hook=decoder)
         if hasattr(self, func):
             try:
                 payload_out = getattr(self, func)(payload)
@@ -107,9 +203,10 @@ class IotServer:
             payload_out = {'error': f"Unknown method '{request.name}'"}
             status = 404
         payload_out = {**payload_out, 'time': datetime.now(timezone.utc).isoformat()}
+        encoder = partial(NumpyArrayEncoder, client=self.client)
         response = MethodResponse.create_from_method_request(
             request, status,
-            json.dumps(payload_out, cls=NumpyArrayEncoder)
+            json.dumps(payload_out, cls=encoder)
         )
         self.client.send_method_response(response)
 
@@ -120,7 +217,8 @@ class IotServer:
             'name': name,
             'time': datetime.now(timezone.utc).isoformat()
         }
-        self.client.send_message(json.dumps(payload, cls=NumpyArrayEncoder))
+        encoder = partial(NumpyArrayEncoder, client=self.client)
+        self.client.send_message(json.dumps(payload, cls=encoder))
 
     def on_ping(self, payload: Dict) -> Dict:
         """Standard response to a ping."""
@@ -154,11 +252,23 @@ class IotClient:
     # The event hub consumer is used when listening to device-to-cloud messages
     hub: Optional[EventHubConsumerClient] = None
 
-    def __init__(self, rstr: Optional[str] = None, hstr: Optional[str] = None):
+    # The connection string to the storage account, and its container
+    sstr: Optional[str]
+    container: Optional[str]
+
+    def __init__(
+        self,
+        rstr: Optional[str] = None,
+        hstr: Optional[str] = None,
+        sstr: Optional[str] = None,
+        container: Optional[str] = None
+    ):
         if rstr:
             self.registry = IoTHubRegistryManager(rstr)
         if hstr:
             self.hub = EventHubConsumerClient.from_connection_string(hstr, '$default')
+        self.sstr = sstr
+        self.container = container
 
     def invoke(self, device: str, method: str, payload: Dict) -> Dict:
         """Invoke a cloud-to-devic message and return its response.
@@ -170,16 +280,18 @@ class IotClient:
         Returns the response dictionary, or raises UnknownMethodError or
         InternalServerError.
         """
-        assert self.registry
+        assert self.registry, 'B'
         payload = {**payload, 'time': datetime.now(timezone.utc).isoformat()}
-        payload = json.dumps(payload, cls=NumpyArrayEncoder)
+        encoder = partial(NumpyArrayEncoder, conn_str=self.sstr, container=self.container)
+        payload = json.dumps(payload, cls=encoder)
         method = CloudToDeviceMethod(method_name=method, payload=payload)
         response = self.registry.invoke_device_method(device, method)
         if response is None:
             raise Exception("Expected repsponse but got 'None'")
         if response.status not in (200, 404, 500):
             raise Exception(f"Unexpected status code: {response.status}")
-        payload = json.loads(response.payload, object_hook=numpy_array_decoder)
+        decoder = partial(numpy_array_decoder, sstr=self.sstr)
+        payload = json.loads(response.payload, object_hook=decoder)
         if response.status == 500:
             raise InternalServerError(payload['error'])
         if response.status == 404:
@@ -196,7 +308,7 @@ class IotClient:
 
     def listen(self):
         """Listen perpetually to device-to-cloud messages."""
-        assert self.hub
+        assert self.hub, 'C'
         self.hub.receive(on_event=self.on_event)
 
     def on_event(self, partition_context: int, event_data: EventData):
@@ -204,7 +316,8 @@ class IotClient:
         method `on_name` where `name` is the message type, if one exists.  If it
         doesn't exist, the message is quietly ignored.
         """
-        payload = json.loads(event_data.body_as_str(), object_hook=numpy_array_decoder)
+        decoder = partial(numpy_array_decoder, sstr=self.sstr)
+        payload = json.loads(event_data.body_as_str(), object_hook=decoder)
         try:
             func_name = payload['name']
         except KeyError:
@@ -214,7 +327,7 @@ class IotClient:
             try:
                 getattr(self, func)(payload)
             except Exception as e:
-                print(e)
+                print(repr(e))
 
 
 class PbmServer(IotServer):
@@ -222,9 +335,9 @@ class PbmServer(IotServer):
 
     pbm: PhysicsModel
 
-    def __init__(self, connection_str: str, pbm: PhysicsModel):
+    def __init__(self, connection_str: str, pbm: PhysicsModel, sstr: Optional[str] = None):
         self.pbm = pbm
-        super().__init__(connection_str)
+        super().__init__(connection_str, sstr=sstr)
 
     def on_ndof(self, _) -> Dict:
         return {'ndof': self.pbm.ndof}
@@ -260,9 +373,9 @@ class PbmClient(PhysicsModel, IotClient):
 
     device: str
 
-    def __init__(self, connection_str: str, device: str):
+    def __init__(self, connection_str: str, device: str, sstr: Optional[str] = None, container: Optional[str] = None):
         self.device = device
-        IotClient.__init__(self, rstr=connection_str)
+        IotClient.__init__(self, rstr=connection_str, sstr=sstr, container=container)
 
     def ping_remote(self) -> bool:
         return self.ping(self.device)
@@ -292,9 +405,9 @@ class DdmServer(IotServer):
 
     ddm: DataModel
 
-    def __init__(self, connection_str: str, ddm: DataModel):
+    def __init__(self, connection_str: str, ddm: DataModel, sstr: Optional[str] = None):
         self.ddm = ddm
-        super().__init__(connection_str)
+        super().__init__(connection_str, sstr=sstr)
 
     def on_predict(self, payload: Dict) -> Dict:
         return {
@@ -309,9 +422,9 @@ class DdmClient(DataModel, IotClient):
 
     device: str
 
-    def __init__(self, connection_str: str, device: str):
+    def __init__(self, connection_str: str, device: str, sstr: Optional[str] = None, container: Optional[str] = None):
         self.device = device
-        IotClient.__init__(self, connection_str)
+        IotClient.__init__(self, rstr=connection_str, sstr=sstr, container=container)
 
     def ping_remote(self) -> bool:
         return self.ping(self.device)
@@ -371,11 +484,13 @@ class DdmTrainer(IotClient):
         trainer: DataTrainer,
         hstr: str,
         cstr: str,
+        sstr: str,
+        container: str,
         filename: Union[str, Path] = None,
         retrain_frequency: int = 5000,
         **kwargs
     ):
-        super().__init__(hstr=hstr)
+        super().__init__(hstr=hstr, sstr=sstr, container=container)
         self.trainer = trainer
         self.connection_string = cstr
         self.retrain_frequency = retrain_frequency
@@ -396,7 +511,7 @@ class DdmTrainer(IotClient):
             ddm.save(self.filename)
         if self.ddm_server:
             self.ddm_server.__exit__()
-        self.ddm_server = DdmServer(self.connection_string, ddm).__enter__()
+        self.ddm_server = DdmServer(self.connection_string, ddm, sstr=self.sstr).__enter__()
 
     def on_new_state(self, payload: Dict):
         state = payload['state']
