@@ -297,6 +297,10 @@ class DdmClient(DataModel, IotClient):
 
     device: str
 
+    @classmethod
+    def from_file(cls, filename):
+        raise NotImplementedError
+
     def __init__(self, connection_str: str, device: str):
         self.device = device
         IotClient.__init__(self, connection_str)

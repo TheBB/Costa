@@ -20,12 +20,22 @@ class KerasTrainer(DataTrainer):
     y: List[np.ndarray]
     model: Optional[Model] = None
 
-    def __init__(self, pbm: PhysicsModel, model: Optional[Model] = None):
+    raw_store: Optional[Path] = None
+
+    def __init__(self, pbm: PhysicsModel, model: Optional[Model] = None, raw_store: Optional[Path] = None):
         self.pbm = pbm
         self.model = model
+        self.prev, self.next = [], []
         self.x, self.y = [], []
+        self.raw_store = raw_store
+
+    def store(self):
+        if self.raw_store:
+            np.savez(self.raw_store, x=self.x, y=self.y, prev=self.prev, next=self.next)
 
     def append(self, params, uprev: np.ndarray, unext: np.ndarray):
+        self.prev.append(uprev)
+        self.next.append(unext)
         x = np.array(self.pbm.predict(params, uprev)).reshape(1, -1)
         y = np.array(self.pbm.residual(params, uprev, unext)).reshape(1, -1)
         self.x.append(x)
@@ -72,7 +82,7 @@ class Keras(DataModel):
 
     @classmethod
     def from_file(cls, filename: Union[str, Path]) -> Keras:
-        model = load_model(filename)
+        model = load_model(filename, compile=False)
         assert model
         return cls(model)
 
