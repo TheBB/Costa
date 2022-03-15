@@ -1,14 +1,19 @@
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from io import BytesIO
 import json
 from pathlib import Path
+import sys
 import time
 
-from typing import Dict, Optional, Union
+from typing import ContextManager, Dict, Optional, Union, BinaryIO
 
+from azure.core.exceptions import AzureError
 from azure.eventhub import EventHubConsumerClient, EventData
 from azure.iot.device import IoTHubDeviceClient, MethodResponse, MethodRequest
 from azure.iot.hub import IoTHubRegistryManager
 from azure.iot.hub.protocol.models.cloud_to_device_method import CloudToDeviceMethod
+from azure.storage.blob import BlobClient
 from msrest.exceptions import HttpOperationError
 import numpy as np
 
@@ -101,6 +106,45 @@ class IotServer:
         )
         self.client.send_method_response(response)
 
+    def upload_data(self, name: str, fmt: str, data: BinaryIO) -> Dict:
+        storage = self.client.get_storage_info_for_blob(name)
+        assert storage
+        sas_url = 'https://{hostname}/{container}/{blob}{token}'.format(
+            hostname=storage['hostName'],
+            container=storage['containerName'],
+            blob=storage['blobName'],
+            token=storage['sasToken'],
+        )
+
+        try:
+            with BlobClient.from_blob_url(sas_url) as blob_client:
+                blob_client.upload_blob(data, overwrite=True)
+            self.client.notify_blob_upload_status(storage['correlationId'], True, 200, f'OK: {name}')
+
+            return {
+                'type': 'file',
+                'format': fmt,
+                'time': datetime.now(timezone.utc).isoformat(),
+                'container': storage['containerName'],
+                'blob': storage['blobName'],
+            }
+
+        except AzureError as err:
+            print(f'Error received when uploading file: {err}', file=sys.stderr)
+            self.client.notify_blob_upload_status(storage['correlationId'], False, err.status_code, str(err))
+
+            return {
+                'type': 'file',
+                'format': 'error',
+                'message': str(err),
+            }
+
+    def upload_ndarray(self, name: str, data: np.ndarray) -> Dict:
+        with BytesIO() as b:
+            np.save(b, data, allow_pickle=False)
+            b.seek(0)
+            return self.upload_data(name, 'npy', b)
+
     def emit(self, name: str, payload: Dict):
         """Emit a device-to-cloud message."""
         payload = {
@@ -142,11 +186,15 @@ class IotClient:
     # The event hub consumer is used when listening to device-to-cloud messages
     hub: Optional[EventHubConsumerClient] = None
 
-    def __init__(self, rstr: Optional[str] = None, hstr: Optional[str] = None):
+    # The connection string for the storage account
+    storage: Optional[str] = None
+
+    def __init__(self, rstr: Optional[str] = None, hstr: Optional[str] = None, sstr: Optional[str] = None):
         if rstr:
             self.registry = IoTHubRegistryManager(rstr)
         if hstr:
             self.hub = EventHubConsumerClient.from_connection_string(hstr, '$default')
+        self.storage = sstr
 
     def invoke(self, device: str, method: str, payload: Dict) -> Dict:
         """Invoke a cloud-to-devic message and return its response.
@@ -186,6 +234,26 @@ class IotClient:
         """Listen perpetually to device-to-cloud messages."""
         assert self.hub
         self.hub.receive(on_event=self.on_event)
+
+    @contextmanager
+    def download(self, filedata: Dict) -> ContextManager[BytesIO]:
+        assert filedata['type'] == 'file'
+        assert filedata['format'] != 'error'
+        assert self.storage is not None
+        with BytesIO() as b:
+            with BlobClient.from_connection_string(
+                conn_str=self.storage,
+                container_name=filedata['container'],
+                blob_name=filedata['blob']
+            ) as client:
+                client.download_blob().readinto(b)
+            b.seek(0)
+            yield b
+
+    def download_ndarray(self, filedata: Dict) -> np.ndarray:
+        assert filedata['format'] == 'npy'
+        with self.download(filedata) as data:
+            return np.load(data)
 
     def on_event(self, partition_context: int, event_data: EventData):
         """Callback for handling device-to-cloud messages.  This will invoke a
