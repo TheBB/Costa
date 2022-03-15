@@ -51,7 +51,10 @@ class IotServer:
 
     client: IoTHubDeviceClient
 
+    name: str
+
     def __init__(self, connection_str: str):
+        _, self.name = next(s for s in connection_str.split(';') if s.startswith('DeviceId')).split('=')
         self.client = IoTHubDeviceClient.create_from_connection_string(connection_str)
         self.client.on_method_request_received = self.method_called
 
@@ -107,6 +110,7 @@ class IotServer:
         self.client.send_method_response(response)
 
     def upload_data(self, name: str, fmt: str, data: BinaryIO) -> Dict:
+        name = f'{self.name}-{name}'
         storage = self.client.get_storage_info_for_blob(name)
         assert storage
         sas_url = 'https://{hostname}/{container}/{blob}{token}'.format(
@@ -385,7 +389,8 @@ class PhysicalDevice(IotServer):
 
     def emit_state(self, params: Dict, state: np.ndarray):
         """Notify the cloud about a new state."""
-        self.emit('new_state', {'params': params, 'state': state})
+        state_ref = self.upload_ndarray('testfile.npy', state)
+        self.emit('new_state', {'params': params, 'state': state_ref})
 
     def emit_clean(self):
         """Notify the cloud that the setup has changed and that the standard
