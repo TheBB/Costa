@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import time
 
-from typing import ContextManager, Dict, Optional, Union, BinaryIO
+from typing import ContextManager, Dict, Optional, Union, BinaryIO, List
 
 from azure.core.exceptions import AzureError
 from azure.eventhub import EventHubConsumerClient, EventData
@@ -34,7 +34,126 @@ class UnknownMethodError(Exception):
     pass
 
 
-class IotServer:
+class IotMailman:
+    """A superclass that has access to the storage facilities of Azure IoT.
+    Both servers and clients make use of this.
+
+    For a subclass to upload, either the client attribute must be set
+    (which is automatic for servers), or both the sstr and container arguments
+    must be given.
+
+    For a subclass to download, the sstr argument must be given.
+    """
+
+    storage_str: Optional[str] = None
+    container_name: Optional[str] = None
+    client: Optional[IoTHubDeviceClient] = None
+
+    def __init__(self, sstr: Optional[str] = None, container: Optional[str] = None):
+        self.storage_str = sstr
+        self.container_name = container
+
+    def _upload_data_as_server(self, name: str, fmt: str, data: BinaryIO) -> Dict:
+        assert self.client is not None
+        storage = self.client.get_storage_info_for_blob(name)
+        assert storage
+        sas_url = 'https://{hostname}/{container}/{blob}{token}'.format(
+            hostname=storage['hostName'],
+            container=storage['containerName'],
+            blob=storage['blobName'],
+            token=storage['sasToken'],
+        )
+        blob_client = BlobClient.from_blob_url(sas_url)
+
+        try:
+            with BlobClient.from_blob_url(sas_url) as blob_client:
+                blob_client.upload_blob(data, overwrite=True)
+            self.client.notify_blob_upload_status(storage['correlationId'], True, 200, f'OK: {name}')
+
+            return {
+                'type': 'file',
+                'format': fmt,
+                'time': datetime.now(timezone.utc).isoformat(),
+                'container': storage['containerName'],
+                'blob': storage['blobName'],
+            }
+
+        except AzureError as err:
+            print(f'Error received when uploading file: {err}', file=sys.stderr)
+            self.client.notify_blob_upload_status(storage['correlationId'], False, err.status_code, str(err))
+
+            return {
+                'type': 'file',
+                'format': 'error',
+                'message': str(err),
+            }
+
+    def _upload_data_as_client(self, name: str, fmt: str, data: BinaryIO) -> Dict:
+        assert self.storage_str is not None
+        assert self.container_name is not None
+
+        try:
+            with BlobClient.from_connection_string(
+                conn_str=self.storage_str,
+                container_name=self.container_name,
+                blob_name=name
+            ) as blob_client:
+                blob_client.upload_blob(data, overwrite=True)
+
+        except AzureError as err:
+            return {
+                'type': 'file',
+                'format': 'error',
+                'message': str(err),
+            }
+
+        return {
+            'type': 'file',
+            'format': fmt,
+            'time': datetime.now(timezone.utc).isoformat(),
+            'container': self.container_name,
+            'blob': name,
+        }
+
+    def upload_data(self, name: str, fmt: str, data: BinaryIO) -> Dict:
+        name = f'{name}.{fmt}'
+        if hasattr(self, 'name'):
+            name = f'{self.name}-{name}'
+
+        if self.client is not None:
+            return self._upload_data_as_server(name, fmt, data)
+        return self._upload_data_as_client(name, fmt, data)
+
+    def upload_ndarray(self, name: str, data: Union[List, np.ndarray]) -> Dict:
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+        with BytesIO() as b:
+            np.save(b, data, allow_pickle=False)
+            b.seek(0)
+            return self.upload_data(name, 'npy', b)
+
+    @contextmanager
+    def download(self, filedata: Dict) -> ContextManager[BytesIO]:
+        assert filedata['type'] == 'file'
+        assert filedata['format'] != 'error'
+        assert self.storage_str is not None
+        with BytesIO() as b:
+            with BlobClient.from_connection_string(
+                conn_str=self.storage_str,
+                container_name=filedata['container'],
+                blob_name=filedata['blob']
+            ) as client:
+                client.download_blob().readinto(b)
+            b.seek(0)
+            yield b
+
+    def download_ndarray(self, filedata: Dict) -> np.ndarray:
+        assert filedata['format'] == 'npy'
+        with self.download(filedata) as data:
+            return np.load(data)
+
+
+class IotServer(IotMailman):
     """An Azure IoT-powered device or server.
 
     This object is a context manager, and should be used as
@@ -53,7 +172,8 @@ class IotServer:
 
     name: str
 
-    def __init__(self, connection_str: str):
+    def __init__(self, connection_str: str, sstr: Optional[str] = None, container: Optional[str] = None):
+        super().__init__(sstr=sstr, container=container)
         _, self.name = next(s for s in connection_str.split(';') if s.startswith('DeviceId')).split('=')
         self.client = IoTHubDeviceClient.create_from_connection_string(connection_str)
         self.client.on_method_request_received = self.method_called
@@ -109,46 +229,6 @@ class IotServer:
         )
         self.client.send_method_response(response)
 
-    def upload_data(self, name: str, fmt: str, data: BinaryIO) -> Dict:
-        name = f'{self.name}-{name}'
-        storage = self.client.get_storage_info_for_blob(name)
-        assert storage
-        sas_url = 'https://{hostname}/{container}/{blob}{token}'.format(
-            hostname=storage['hostName'],
-            container=storage['containerName'],
-            blob=storage['blobName'],
-            token=storage['sasToken'],
-        )
-
-        try:
-            with BlobClient.from_blob_url(sas_url) as blob_client:
-                blob_client.upload_blob(data, overwrite=True)
-            self.client.notify_blob_upload_status(storage['correlationId'], True, 200, f'OK: {name}')
-
-            return {
-                'type': 'file',
-                'format': fmt,
-                'time': datetime.now(timezone.utc).isoformat(),
-                'container': storage['containerName'],
-                'blob': storage['blobName'],
-            }
-
-        except AzureError as err:
-            print(f'Error received when uploading file: {err}', file=sys.stderr)
-            self.client.notify_blob_upload_status(storage['correlationId'], False, err.status_code, str(err))
-
-            return {
-                'type': 'file',
-                'format': 'error',
-                'message': str(err),
-            }
-
-    def upload_ndarray(self, name: str, data: np.ndarray) -> Dict:
-        with BytesIO() as b:
-            np.save(b, data, allow_pickle=False)
-            b.seek(0)
-            return self.upload_data(name, 'npy', b)
-
     def emit(self, name: str, payload: Dict):
         """Emit a device-to-cloud message."""
         payload = {
@@ -163,7 +243,7 @@ class IotServer:
         return {}
 
 
-class IotClient:
+class IotClient(IotMailman):
     """An Azure IoT-powered client object.
 
     A client does two things:
@@ -190,15 +270,18 @@ class IotClient:
     # The event hub consumer is used when listening to device-to-cloud messages
     hub: Optional[EventHubConsumerClient] = None
 
-    # The connection string for the storage account
-    storage: Optional[str] = None
-
-    def __init__(self, rstr: Optional[str] = None, hstr: Optional[str] = None, sstr: Optional[str] = None):
+    def __init__(
+        self,
+        rstr: Optional[str] = None,
+        hstr: Optional[str] = None,
+        sstr: Optional[str] = None,
+        container: Optional[str] = None,
+    ):
+        super().__init__(sstr=sstr, container=container)
         if rstr:
             self.registry = IoTHubRegistryManager(rstr)
         if hstr:
             self.hub = EventHubConsumerClient.from_connection_string(hstr, '$default')
-        self.storage = sstr
 
     def invoke(self, device: str, method: str, payload: Dict) -> Dict:
         """Invoke a cloud-to-devic message and return its response.
@@ -239,26 +322,6 @@ class IotClient:
         assert self.hub
         self.hub.receive(on_event=self.on_event)
 
-    @contextmanager
-    def download(self, filedata: Dict) -> ContextManager[BytesIO]:
-        assert filedata['type'] == 'file'
-        assert filedata['format'] != 'error'
-        assert self.storage is not None
-        with BytesIO() as b:
-            with BlobClient.from_connection_string(
-                conn_str=self.storage,
-                container_name=filedata['container'],
-                blob_name=filedata['blob']
-            ) as client:
-                client.download_blob().readinto(b)
-            b.seek(0)
-            yield b
-
-    def download_ndarray(self, filedata: Dict) -> np.ndarray:
-        assert filedata['format'] == 'npy'
-        with self.download(filedata) as data:
-            return np.load(data)
-
     def on_event(self, partition_context: int, event_data: EventData):
         """Callback for handling device-to-cloud messages.  This will invoke a
         method `on_name` where `name` is the message type, if one exists.  If it
@@ -282,35 +345,39 @@ class PbmServer(IotServer):
 
     pbm: PhysicsModel
 
-    def __init__(self, connection_str: str, pbm: PhysicsModel):
+    def __init__(self, connection_str: str, pbm: PhysicsModel, sstr: Optional[str] = None, container: Optional[str] = None):
         self.pbm = pbm
-        super().__init__(connection_str)
+        super().__init__(connection_str, sstr=sstr, container=container)
 
     def on_ndof(self, _) -> Dict:
         return {'ndof': self.pbm.ndof}
 
     def on_dirichlet_dofs(self, _) -> Dict:
-        return {'dofs': self.pbm.dirichlet_dofs()}
+        dofs = self.pbm.dirichlet_dofs()
+        return {'dofs': self.upload_ndarray('dofs', dofs)}
 
     def on_initial_condition(self, payload: Dict) -> Dict:
-        return {
-            'initial': self.pbm.initial_condition(payload['params'])
-        }
+        initial = self.pbm.initial_condition(payload['params'])
+        return {'initial': self.upload_ndarray('initial', initial)}
 
     def on_predict(self, payload: Dict) -> Dict:
-        return {
-            'predicted': self.pbm.predict(payload['params'], payload['uprev'])
-        }
+        mu = payload['params']
+        uprev = self.download_ndarray(payload['uprev'])
+        upred = self.pbm.predict(payload['params'], uprev)
+        return {'predicted': self.upload_ndarray('pbm-upred', upred)}
 
     def on_residual(self, payload: Dict) -> Dict:
-        return {
-            'residual': self.pbm.residual(payload['params'], payload['uprev'], payload['unext'])
-        }
+        uprev = self.download_ndarray(payload['uprev'])
+        unext = self.download_ndarray(payload['unext'])
+        sigma = self.pbm.residual(payload['params'], uprev, unext)
+        return {'residual': self.upload_ndarray('residual', sigma)}
 
     def on_correct(self, payload: Dict) -> Dict:
-        return {
-            'corrected': self.pbm.correct(payload['params'], payload['uprev'], payload['sigma'])
-        }
+        uprev = self.download_ndarray(payload['uprev'])
+        sigma = self.download_ndarray(payload['sigma'])
+        ucorr = self.pbm.correct(payload['params'], uprev, sigma)
+        # print('Correct', np.sum(ucorr))
+        return {'corrected': self.upload_ndarray('ucorr', ucorr)}
 
 
 class PbmClient(PhysicsModel, IotClient):
@@ -320,9 +387,9 @@ class PbmClient(PhysicsModel, IotClient):
 
     device: str
 
-    def __init__(self, connection_str: str, device: str):
+    def __init__(self, connection_str: str, device: str, sstr: Optional[str] = None, container: Optional[str] = None):
         self.device = device
-        IotClient.__init__(self, rstr=connection_str)
+        IotClient.__init__(self, rstr=connection_str, sstr=sstr, container=container)
 
     def ping_remote(self) -> bool:
         return self.ping(self.device)
@@ -332,19 +399,35 @@ class PbmClient(PhysicsModel, IotClient):
         return self.invoke(self.device, 'ndof', {})['ndof']
 
     def dirichlet_dofs(self):
-        return self.invoke(self.device, 'dirichlet_dofs', {})['dofs']
+        ref = self.invoke(self.device, 'dirichlet_dofs', {})['dofs']
+        return self.download_ndarray(ref)
 
     def initial_condition(self, params):
-        return self.invoke(self.device, 'initial_condition', {'params': params})['initial']
+        ref = self.invoke(self.device, 'initial_condition', {'params': params})['initial']
+        return self.download_ndarray(ref)
 
     def predict(self, params, uprev):
-        return self.invoke(self.device, 'predict', {'params': params, 'uprev': uprev})['predicted']
+        ref = self.invoke(self.device, 'predict', {
+            'params': params,
+            'uprev': self.upload_ndarray('uprev', uprev),
+        })['predicted']
+        return self.download_ndarray(ref)
 
     def residual(self, params, uprev, unext):
-        return self.invoke(self.device, 'residual', {'params': params, 'uprev': uprev, 'unext': unext})['residual']
+        ref = self.invoke(self.device, 'residual', {
+            'params': params,
+            'uprev': self.upload_ndarray('uprev', uprev),
+            'unext': self.upload_ndarray('unext', unext),
+        })['residual']
+        return self.download_ndarray(ref)
 
     def correct(self, params, uprev, sigma):
-        return self.invoke(self.device, 'correct', {'params': params, 'uprev': uprev, 'sigma': sigma})['corrected']
+        ref = self.invoke(self.device, 'correct', {
+            'params': params,
+            'uprev': self.upload_ndarray('uprev', uprev),
+            'sigma': self.upload_ndarray('sigma', sigma),
+        })['corrected']
+        return self.download_ndarray(ref)
 
 
 class DdmServer(IotServer):
@@ -352,14 +435,14 @@ class DdmServer(IotServer):
 
     ddm: DataModel
 
-    def __init__(self, connection_str: str, ddm: DataModel):
+    def __init__(self, connection_str: str, ddm: DataModel, sstr: Optional[str] = None, container: Optional[str] = None):
         self.ddm = ddm
-        super().__init__(connection_str)
+        super().__init__(connection_str, sstr=sstr, container=container)
 
     def on_predict(self, payload: Dict) -> Dict:
-        return {
-            'sigma': self.ddm(payload['params'], payload['upred'])
-        }
+        upred = self.download_ndarray(payload['upred'])
+        sigma = self.ddm(payload['params'], upred)
+        return {'sigma': self.upload_ndarray('sigma', sigma)}
 
 
 class DdmClient(DataModel, IotClient):
@@ -373,15 +456,19 @@ class DdmClient(DataModel, IotClient):
     def from_file(cls, filename):
         raise NotImplementedError
 
-    def __init__(self, connection_str: str, device: str):
+    def __init__(self, connection_str: str, device: str, sstr: Optional[str] = None, container: Optional[str] = None):
         self.device = device
-        IotClient.__init__(self, connection_str)
+        IotClient.__init__(self, rstr=connection_str, sstr=sstr, container=container)
 
     def ping_remote(self) -> bool:
         return self.ping(self.device)
 
-    def __call__(self, params, upred):
-        return self.invoke(self.device, 'predict', {'params': params, 'upred': upred})['sigma']
+    def __call__(self, params: Dict, upred: np.ndarray) -> np.ndarray:
+        ref = self.invoke(self.device, 'predict', {
+            'params': params,
+            'upred': self.upload_ndarray('ddm-upred', upred),
+        })['sigma']
+        return self.download_ndarray(ref)
 
 
 class PhysicalDevice(IotServer):
@@ -389,8 +476,10 @@ class PhysicalDevice(IotServer):
 
     def emit_state(self, params: Dict, state: np.ndarray):
         """Notify the cloud about a new state."""
-        state_ref = self.upload_ndarray('testfile.npy', state)
-        self.emit('new_state', {'params': params, 'state': state_ref})
+        self.emit('new_state', {
+            'params': params,
+            'state': self.upload_ndarray('state', state)
+        })
 
     def emit_clean(self):
         """Notify the cloud that the setup has changed and that the standard
@@ -464,7 +553,7 @@ class DdmTrainer(IotClient):
         self.ddm_server = DdmServer(self.connection_string, ddm).__enter__()
 
     def on_new_state(self, payload: Dict):
-        state = np.array(payload['state'])
+        state = self.download_ndarray(payload['state'])
         if self.prev_state is not None:
             self.trainer.append(payload['params'], self.prev_state, state)
             self.state_count += 1
