@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -36,6 +37,33 @@ class UnknownMethodError(Exception):
     pass
 
 
+class IotConfig:
+
+    # Azure connection strings
+    registry: Optional[str] = None
+    hub: Optional[str] = None
+    storage: Optional[str] = None
+    container: Optional[str] = None
+
+    devices: Dict[str, str]
+
+    def __init__(self):
+        env = os.environ
+        self.registry = env.get('COSTA_RSTR')
+        self.hub = env.get('COSTA_HSTR')
+        self.storage = env.get('COSTA_SSTR')
+        self.container = env.get('COSTA_CONTAINER')
+
+        self.devices = {}
+        for key, value in env.items():
+            if key.startswith('COSTA_') and key.endswith('_CSTR'):
+                try:
+                    _, device = next(k for k in value.split(';') if k.startswith('DeviceId')).split('=')
+                    self.devices[device] = value
+                except (StopIteration, TypeError, ValueError):
+                    pass
+
+
 class IotMailman:
     """A superclass that has access to the storage facilities of Azure IoT.
     Both servers and clients make use of this.
@@ -49,11 +77,12 @@ class IotMailman:
 
     storage_str: Optional[str] = None
     container_name: Optional[str] = None
+
     client: Optional[IoTHubDeviceClient] = None
 
-    def __init__(self, sstr: Optional[str] = None, container: Optional[str] = None):
-        self.storage_str = sstr
-        self.container_name = container
+    def __init__(self, config: IotConfig):
+        self.storage_str = config.storage
+        self.container_name = config.container
 
     def _upload_data_as_server(self, name: str, fmt: str, data: BinaryIO) -> Dict:
         assert self.client is not None
@@ -174,16 +203,11 @@ class IotServer(IotMailman, Logger):
 
     name: str
 
-    def __init__(
-        self,
-        connection_str: str,
-        sstr: Optional[str] = None,
-        container: Optional[str] = None
-    ):
-        IotMailman.__init__(self, sstr=sstr, container=container)
-        _, self.name = next(s for s in connection_str.split(';') if s.startswith('DeviceId')).split('=')
-        Logger.__init__(self, self.name)
-        self.client = IoTHubDeviceClient.create_from_connection_string(connection_str)
+    def __init__(self, name: str, config: IotConfig):
+        IotMailman.__init__(self, config)
+        Logger.__init__(self, name)
+        self.name = name
+        self.client = IoTHubDeviceClient.create_from_connection_string(config.devices[name])
         self.client.on_method_request_received = self.method_called
 
     def __enter__(self):
@@ -285,20 +309,13 @@ class IotClient(IotMailman, Logger):
 
     log_type = 'client'
 
-    def __init__(
-        self,
-        name: str,
-        rstr: Optional[str] = None,
-        hstr: Optional[str] = None,
-        sstr: Optional[str] = None,
-        container: Optional[str] = None,
-    ):
-        IotMailman.__init__(self, sstr=sstr, container=container)
+    def __init__(self, name: str, config: IotConfig):
+        IotMailman.__init__(self, config)
         Logger.__init__(self, name)
-        if rstr:
-            self.registry = IoTHubRegistryManager(rstr)
-        if hstr:
-            self.hub = EventHubConsumerClient.from_connection_string(hstr, '$default')
+        if config.registry:
+            self.registry = IoTHubRegistryManager(config.registry)
+        if config.hub:
+            self.hub = EventHubConsumerClient.from_connection_string(config.hub, '$default')
 
     def invoke(self, device: str, method: str, payload: Dict) -> Dict:
         """Invoke a cloud-to-devic message and return its response.
@@ -371,9 +388,9 @@ class PbmServer(IotServer):
 
     log_type = 'pbm'
 
-    def __init__(self, connection_str: str, pbm: PhysicsModel, sstr: Optional[str] = None, container: Optional[str] = None):
+    def __init__(self, name: str, config: IotConfig, pbm: PhysicsModel):
         self.pbm = pbm
-        super().__init__(connection_str, sstr=sstr, container=container)
+        super().__init__(name, config)
 
     def on_ndof(self, _) -> Dict:
         return {'ndof': self.pbm.ndof}
@@ -412,16 +429,9 @@ class PbmClient(PhysicsModel, IotClient):
 
     device: str
 
-    def __init__(
-        self,
-        connection_str: str,
-        device: str,
-        sstr: Optional[str] = None,
-        container: Optional[str] = None,
-        name: Optional[str] = None,
-    ):
+    def __init__(self, config: IotConfig, device: str, name: Optional[str] = None):
         self.device = device
-        IotClient.__init__(self, name or 'PbmClient', rstr=connection_str, sstr=sstr, container=container)
+        IotClient.__init__(self, name or 'PbmClient', config)
 
     def ping_remote(self) -> bool:
         return self.ping(self.device)
@@ -469,9 +479,9 @@ class DdmServer(IotServer):
 
     log_type = 'ddm'
 
-    def __init__(self, connection_str: str, ddm: DataModel, sstr: Optional[str] = None, container: Optional[str] = None):
+    def __init__(self, name: str, config: IotConfig, ddm: DataModel):
         self.ddm = ddm
-        super().__init__(connection_str, sstr=sstr, container=container)
+        super().__init__(name, config)
 
     def on_predict(self, payload: Dict) -> Dict:
         upred = self.download_ndarray(payload['upred'])
@@ -490,16 +500,9 @@ class DdmClient(DataModel, IotClient):
     def from_file(cls, filename):
         raise NotImplementedError
 
-    def __init__(
-        self,
-        connection_str: str,
-        device: str,
-        sstr: Optional[str] = None,
-        container: Optional[str] = None,
-        name: Optional[str] = None,
-    ):
+    def __init__(self, config: IotConfig, device: str, name: Optional[str] = None):
         self.device = device
-        IotClient.__init__(self, name or 'DdmClient', rstr=connection_str, sstr=sstr, container=container)
+        IotClient.__init__(self, name or 'DdmClient', config)
 
     def ping_remote(self) -> bool:
         return self.ping(self.device)
