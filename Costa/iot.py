@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import time
+import uuid
 
 from typing import ContextManager, Dict, Optional, Union, BinaryIO, List
 
@@ -18,6 +19,7 @@ from msrest.exceptions import HttpOperationError
 import numpy as np
 
 from .api import DataModel, DataTrainer, PhysicsModel
+from .util import Logger
 
 
 class NumpyArrayEncoder(json.JSONEncoder):
@@ -116,7 +118,7 @@ class IotMailman:
         }
 
     def upload_data(self, name: str, fmt: str, data: BinaryIO) -> Dict:
-        name = f'{name}.{fmt}'
+        name = f'{name}-{uuid.uuid4()}.{fmt}'
         if hasattr(self, 'name'):
             name = f'{self.name}-{name}'
 
@@ -153,7 +155,7 @@ class IotMailman:
             return np.load(data)
 
 
-class IotServer(IotMailman):
+class IotServer(IotMailman, Logger):
     """An Azure IoT-powered device or server.
 
     This object is a context manager, and should be used as
@@ -172,9 +174,15 @@ class IotServer(IotMailman):
 
     name: str
 
-    def __init__(self, connection_str: str, sstr: Optional[str] = None, container: Optional[str] = None):
-        super().__init__(sstr=sstr, container=container)
+    def __init__(
+        self,
+        connection_str: str,
+        sstr: Optional[str] = None,
+        container: Optional[str] = None
+    ):
+        IotMailman.__init__(self, sstr=sstr, container=container)
         _, self.name = next(s for s in connection_str.split(';') if s.startswith('DeviceId')).split('=')
+        Logger.__init__(self, self.name)
         self.client = IoTHubDeviceClient.create_from_connection_string(connection_str)
         self.client.on_method_request_received = self.method_called
 
@@ -191,6 +199,7 @@ class IotServer(IotMailman):
         """Utility method for entering an infinite loop. During this, the device
         will respond to cloud-to-device requests.
         """
+        self.log('Online')
         try:
             while True:
                 time.sleep(0.1)
@@ -213,15 +222,18 @@ class IotServer(IotMailman):
         func = f'on_{request.name}'
         payload = json.loads(request.payload)
         if hasattr(self, func):
+            self.log('Received query:', request.name)
             try:
                 payload_out = getattr(self, func)(payload)
                 status = 200
             except Exception as e:
                 payload_out = {'error': str(e)}
                 status = 500
+                self.log('Failure during callback:', e)
         else:
             payload_out = {'error': f"Unknown method '{request.name}'"}
             status = 404
+            self.log('Received unknow query:', request.name)
         payload_out = {**payload_out, 'time': datetime.now(timezone.utc).isoformat()}
         response = MethodResponse.create_from_method_request(
             request, status,
@@ -231,6 +243,7 @@ class IotServer(IotMailman):
 
     def emit(self, name: str, payload: Dict):
         """Emit a device-to-cloud message."""
+        self.log('Emitting', name)
         payload = {
             **payload,
             'name': name,
@@ -243,7 +256,7 @@ class IotServer(IotMailman):
         return {}
 
 
-class IotClient(IotMailman):
+class IotClient(IotMailman, Logger):
     """An Azure IoT-powered client object.
 
     A client does two things:
@@ -270,14 +283,18 @@ class IotClient(IotMailman):
     # The event hub consumer is used when listening to device-to-cloud messages
     hub: Optional[EventHubConsumerClient] = None
 
+    log_type = 'client'
+
     def __init__(
         self,
+        name: str,
         rstr: Optional[str] = None,
         hstr: Optional[str] = None,
         sstr: Optional[str] = None,
         container: Optional[str] = None,
     ):
-        super().__init__(sstr=sstr, container=container)
+        IotMailman.__init__(self, sstr=sstr, container=container)
+        Logger.__init__(self, name)
         if rstr:
             self.registry = IoTHubRegistryManager(rstr)
         if hstr:
@@ -294,18 +311,23 @@ class IotClient(IotMailman):
         InternalServerError.
         """
         assert self.registry
+        self.log('Invoking', method, 'on', device)
         payload = {**payload, 'time': datetime.now(timezone.utc).isoformat()}
         payload = json.dumps(payload, cls=NumpyArrayEncoder)
         method = CloudToDeviceMethod(method_name=method, payload=payload)
         response = self.registry.invoke_device_method(device, method)
         if response is None:
+            self.log('Received unexpected response: none')
             raise Exception("Expected repsponse but got 'None'")
         if response.status not in (200, 404, 500):
+            self.log('Received unexpected status code:', response.status)
             raise Exception(f"Unexpected status code: {response.status}")
         payload = json.loads(response.payload)
         if response.status == 500:
+            self.log('Received status code 500:', payload['error'])
             raise InternalServerError(payload['error'])
         if response.status == 404:
+            self.log('Received status code 404:', payload['error'])
             raise UnknownMethodError(payload['error'])
         return payload
 
@@ -320,6 +342,7 @@ class IotClient(IotMailman):
     def listen(self):
         """Listen perpetually to device-to-cloud messages."""
         assert self.hub
+        self.log('Online, listening for events')
         self.hub.receive(on_event=self.on_event)
 
     def on_event(self, partition_context: int, event_data: EventData):
@@ -335,6 +358,7 @@ class IotClient(IotMailman):
         func = f'on_{func_name}'
         if hasattr(self, func):
             try:
+                self.log('Received event:', payload['name'])
                 getattr(self, func)(payload)
             except Exception as e:
                 print(e)
@@ -344,6 +368,8 @@ class PbmServer(IotServer):
     """A PbmServer exposes the functionality of a physics-based model to Azure IoT."""
 
     pbm: PhysicsModel
+
+    log_type = 'pbm'
 
     def __init__(self, connection_str: str, pbm: PhysicsModel, sstr: Optional[str] = None, container: Optional[str] = None):
         self.pbm = pbm
@@ -376,7 +402,6 @@ class PbmServer(IotServer):
         uprev = self.download_ndarray(payload['uprev'])
         sigma = self.download_ndarray(payload['sigma'])
         ucorr = self.pbm.correct(payload['params'], uprev, sigma)
-        # print('Correct', np.sum(ucorr))
         return {'corrected': self.upload_ndarray('ucorr', ucorr)}
 
 
@@ -387,9 +412,16 @@ class PbmClient(PhysicsModel, IotClient):
 
     device: str
 
-    def __init__(self, connection_str: str, device: str, sstr: Optional[str] = None, container: Optional[str] = None):
+    def __init__(
+        self,
+        connection_str: str,
+        device: str,
+        sstr: Optional[str] = None,
+        container: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
         self.device = device
-        IotClient.__init__(self, rstr=connection_str, sstr=sstr, container=container)
+        IotClient.__init__(self, name or 'PbmClient', rstr=connection_str, sstr=sstr, container=container)
 
     def ping_remote(self) -> bool:
         return self.ping(self.device)
@@ -435,6 +467,8 @@ class DdmServer(IotServer):
 
     ddm: DataModel
 
+    log_type = 'ddm'
+
     def __init__(self, connection_str: str, ddm: DataModel, sstr: Optional[str] = None, container: Optional[str] = None):
         self.ddm = ddm
         super().__init__(connection_str, sstr=sstr, container=container)
@@ -456,9 +490,16 @@ class DdmClient(DataModel, IotClient):
     def from_file(cls, filename):
         raise NotImplementedError
 
-    def __init__(self, connection_str: str, device: str, sstr: Optional[str] = None, container: Optional[str] = None):
+    def __init__(
+        self,
+        connection_str: str,
+        device: str,
+        sstr: Optional[str] = None,
+        container: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
         self.device = device
-        IotClient.__init__(self, rstr=connection_str, sstr=sstr, container=container)
+        IotClient.__init__(self, name or 'DdmClient', rstr=connection_str, sstr=sstr, container=container)
 
     def ping_remote(self) -> bool:
         return self.ping(self.device)
@@ -473,6 +514,8 @@ class DdmClient(DataModel, IotClient):
 
 class PhysicalDevice(IotServer):
     """A PhysicalDevice represents a device that regularly emits state information."""
+
+    log_type = 'device'
 
     def emit_state(self, params: Dict, state: np.ndarray):
         """Notify the cloud about a new state."""
@@ -527,9 +570,10 @@ class DdmTrainer(IotClient):
         cstr: str,
         filename: Union[str, Path] = None,
         retrain_frequency: int = 5000,
+        name: Optional[str] = None,
         **kwargs
     ):
-        super().__init__(hstr=hstr)
+        super().__init__(name or 'Trainer', hstr=hstr)
         self.trainer = trainer
         self.connection_string = cstr
         self.retrain_frequency = retrain_frequency
