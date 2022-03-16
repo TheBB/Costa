@@ -147,7 +147,7 @@ class IotMailman:
         }
 
     def upload_data(self, name: str, fmt: str, data: BinaryIO) -> Dict:
-        name = f'{name}-{uuid.uuid4()}.{fmt}'
+        name = f'{name}-{uuid.uuid1()}.{fmt}'
         if hasattr(self, 'name'):
             name = f'{self.name}-{name}'
 
