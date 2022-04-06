@@ -12,6 +12,8 @@ Parameters = Dict[str, Union[float, List[float]]]
 Vector = np.ndarray
 Matrix = np.ndarray
 
+VectorData = Union[Vector, Dict[str, Vector]]
+
 
 class PhysicsModel(ABC):
 
@@ -24,11 +26,11 @@ class PhysicsModel(ABC):
         """Return a list of Dirichlet DoF IDs (1-indexed)."""
 
     @abstractmethod
-    def initial_condition(self, params: Parameters) -> Vector:
+    def initial_condition(self, params: Parameters) -> VectorData:
         """Return the configured initial condition for a set of parameters."""
 
     @abstractmethod
-    def predict(self, params: Parameters, uprev: Vector) -> Vector:
+    def predict(self, params: Parameters, uprev: VectorData) -> VectorData:
         """Make an uncorrected prediction of the next timestep given the
         previous timestep.  This is nothing more than a standard discrete
         timestep method.
@@ -40,7 +42,7 @@ class PhysicsModel(ABC):
         """
 
     @abstractmethod
-    def residual(self, params: Parameters, uprev: Vector, unext: Vector) -> Vector:
+    def residual(self, params: Parameters, uprev: VectorData, unext: VectorData) -> VectorData:
         """Calculate the residual Au - b given the assumed solution unext.
 
         :param params: Dictionary of parameters.
@@ -50,7 +52,7 @@ class PhysicsModel(ABC):
         :return: The residual Au - b."""
 
     @abstractmethod
-    def correct(self, params: Parameters, uprev: Vector, sigma: Vector) -> Vector:
+    def correct(self, params: Parameters, uprev: VectorData, sigma: VectorData) -> VectorData:
         """Calculate a corrected prediction of the next timestep given
         the previous timestep and a right-hand side perturbation.
 
@@ -66,13 +68,13 @@ class PhysicsModel(ABC):
 
 class DataModel(ABC):
 
-    @abstractclassmethod
+    @classmethod
     def from_file(cls, filename: Union[str, Path]) -> DataModel:
         """Load a data model from a file."""
         raise NotImplementedError(f"from_file() not implemented for {cls}")
 
     @abstractmethod
-    def __call__(self, params: Parameters, upred: Vector) -> Vector:
+    def __call__(self, params: Parameters, upred: VectorData) -> VectorData:
         """Calculate a right-hand side perturbation to use for a corrected
         prediction of the next timestep given the uncorrected prediction.
 

@@ -36,8 +36,8 @@ class KerasTrainer(DataTrainer):
     def append(self, params, uprev: np.ndarray, unext: np.ndarray):
         self.prev.append(uprev)
         self.next.append(unext)
-        x = np.array(self.pbm.predict(params, uprev)).reshape(1, -1)
-        y = np.array(self.pbm.residual(params, uprev, unext)).reshape(1, -1)
+        x = np.array(self.pbm.predict(params, uprev)).flatten()
+        y = np.array(self.pbm.residual(params, uprev, unext)).flatten()
         self.x.append(x)
         self.y.append(y)
 

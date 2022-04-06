@@ -23,6 +23,16 @@ from .api import DataModel, DataTrainer, PhysicsModel
 from .util import Logger
 
 
+Arrays = Union[
+    List,
+    np.ndarray,
+    Dict[
+        str,
+        Union[List, np.ndarray],
+    ],
+]
+
+
 class NumpyArrayEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
@@ -155,13 +165,28 @@ class IotMailman:
             return self._upload_data_as_server(name, fmt, data)
         return self._upload_data_as_client(name, fmt, data)
 
-    def upload_ndarray(self, name: str, data: Union[List, np.ndarray]) -> Dict:
+    def upload_single_ndarray(self, name: str, data: Union[List, np.ndarray]) -> Dict:
         if not isinstance(data, np.ndarray):
             data = np.array(data)
         with BytesIO() as b:
             np.save(b, data, allow_pickle=False)
             b.seek(0)
             return self.upload_data(name, 'npy', b)
+
+    def upload_multiple_ndarrays(self, name: str, data: Dict[str, Union[List, np.ndarray]]) -> Dict:
+        data = {
+            k: v if isinstance(v, np.ndarray) else np.array(v)
+            for k, v in data.items()
+        }
+        with BytesIO() as b:
+            np.savez(b, **data)
+            b.seek(0)
+            return self.upload_data(name, 'npz', b)
+
+    def upload_ndarrays(self, name: str, data: Arrays) -> Dict:
+        if isinstance(data, Dict):
+            return self.upload_multiple_ndarrays(name, data)
+        return self.upload_single_ndarray(name, data)
 
     @contextmanager
     def download(self, filedata: Dict) -> ContextManager[BytesIO]:
@@ -178,10 +203,20 @@ class IotMailman:
             b.seek(0)
             yield b
 
-    def download_ndarray(self, filedata: Dict) -> np.ndarray:
+    def download_single_ndarray(self, filedata: Dict) -> np.ndarray:
         assert filedata['format'] == 'npy'
         with self.download(filedata) as data:
             return np.load(data)
+
+    def download_multiple_ndarrays(self, filedata: Dict) -> Dict[str, np.ndarray]:
+        assert filedata['format'] == 'npz'
+        with self.download(filedata) as data:
+            return dict(np.load(data))
+
+    def download_ndarrays(self, filedata: Dict) -> Union[np.ndarray, Dict[str, np.ndarray]]:
+        if filedata['format'] == 'npy':
+            return self.download_single_ndarray(filedata)
+        return self.download_multiple_ndarrays(filedata)
 
 
 class IotServer(IotMailman, Logger):
@@ -397,29 +432,29 @@ class PbmServer(IotServer):
 
     def on_dirichlet_dofs(self, _) -> Dict:
         dofs = self.pbm.dirichlet_dofs()
-        return {'dofs': self.upload_ndarray('dofs', dofs)}
+        return {'dofs': self.upload_ndarrays('dofs', dofs)}
 
     def on_initial_condition(self, payload: Dict) -> Dict:
         initial = self.pbm.initial_condition(payload['params'])
-        return {'initial': self.upload_ndarray('initial', initial)}
+        return {'initial': self.upload_ndarrays('initial', initial)}
 
     def on_predict(self, payload: Dict) -> Dict:
         mu = payload['params']
-        uprev = self.download_ndarray(payload['uprev'])
+        uprev = self.download_ndarrays(payload['uprev'])
         upred = self.pbm.predict(payload['params'], uprev)
-        return {'predicted': self.upload_ndarray('pbm-upred', upred)}
+        return {'predicted': self.upload_ndarrays('pbm-upred', upred)}
 
     def on_residual(self, payload: Dict) -> Dict:
-        uprev = self.download_ndarray(payload['uprev'])
-        unext = self.download_ndarray(payload['unext'])
+        uprev = self.download_ndarrays(payload['uprev'])
+        unext = self.download_ndarrays(payload['unext'])
         sigma = self.pbm.residual(payload['params'], uprev, unext)
-        return {'residual': self.upload_ndarray('residual', sigma)}
+        return {'residual': self.upload_ndarrays('residual', sigma)}
 
     def on_correct(self, payload: Dict) -> Dict:
-        uprev = self.download_ndarray(payload['uprev'])
-        sigma = self.download_ndarray(payload['sigma'])
+        uprev = self.download_ndarrays(payload['uprev'])
+        sigma = self.download_ndarrays(payload['sigma'])
         ucorr = self.pbm.correct(payload['params'], uprev, sigma)
-        return {'corrected': self.upload_ndarray('ucorr', ucorr)}
+        return {'corrected': self.upload_ndarrays('ucorr', ucorr)}
 
 
 class PbmClient(PhysicsModel, IotClient):
@@ -442,34 +477,34 @@ class PbmClient(PhysicsModel, IotClient):
 
     def dirichlet_dofs(self):
         ref = self.invoke(self.device, 'dirichlet_dofs', {})['dofs']
-        return self.download_ndarray(ref)
+        return self.download_ndarrays(ref)
 
     def initial_condition(self, params):
         ref = self.invoke(self.device, 'initial_condition', {'params': params})['initial']
-        return self.download_ndarray(ref)
+        return self.download_ndarrays(ref)
 
     def predict(self, params, uprev):
         ref = self.invoke(self.device, 'predict', {
             'params': params,
-            'uprev': self.upload_ndarray('uprev', uprev),
+            'uprev': self.upload_ndarrays('uprev', uprev),
         })['predicted']
-        return self.download_ndarray(ref)
+        return self.download_ndarrays(ref)
 
     def residual(self, params, uprev, unext):
         ref = self.invoke(self.device, 'residual', {
             'params': params,
-            'uprev': self.upload_ndarray('uprev', uprev),
-            'unext': self.upload_ndarray('unext', unext),
+            'uprev': self.upload_ndarrays('uprev', uprev),
+            'unext': self.upload_ndarrays('unext', unext),
         })['residual']
-        return self.download_ndarray(ref)
+        return self.download_ndarrays(ref)
 
     def correct(self, params, uprev, sigma):
         ref = self.invoke(self.device, 'correct', {
             'params': params,
-            'uprev': self.upload_ndarray('uprev', uprev),
-            'sigma': self.upload_ndarray('sigma', sigma),
+            'uprev': self.upload_ndarrays('uprev', uprev),
+            'sigma': self.upload_ndarrays('sigma', sigma),
         })['corrected']
-        return self.download_ndarray(ref)
+        return self.download_ndarrays(ref)
 
 
 class DdmServer(IotServer):
@@ -484,9 +519,9 @@ class DdmServer(IotServer):
         super().__init__(name, config)
 
     def on_predict(self, payload: Dict) -> Dict:
-        upred = self.download_ndarray(payload['upred'])
+        upred = self.download_ndarrays(payload['upred'])
         sigma = self.ddm(payload['params'], upred)
-        return {'sigma': self.upload_ndarray('sigma', sigma)}
+        return {'sigma': self.upload_ndarrays('sigma', sigma)}
 
 
 class DdmClient(DataModel, IotClient):
@@ -510,9 +545,9 @@ class DdmClient(DataModel, IotClient):
     def __call__(self, params: Dict, upred: np.ndarray) -> np.ndarray:
         ref = self.invoke(self.device, 'predict', {
             'params': params,
-            'upred': self.upload_ndarray('ddm-upred', upred),
+            'upred': self.upload_ndarrays('ddm-upred', upred),
         })['sigma']
-        return self.download_ndarray(ref)
+        return self.download_ndarrays(ref)
 
 
 class PhysicalDevice(IotServer):
@@ -520,11 +555,12 @@ class PhysicalDevice(IotServer):
 
     log_type = 'device'
 
-    def emit_state(self, params: Dict, state: np.ndarray):
+    def emit_state(self, params: Dict, field: str, state: np.ndarray):
         """Notify the cloud about a new state."""
         self.emit('new_state', {
             'params': params,
-            'state': self.upload_ndarray('state', state)
+            'field': field,
+            'state': self.upload_ndarrays('state', state)
         })
 
     def emit_clean(self):
@@ -600,7 +636,7 @@ class DdmTrainer(IotClient):
         self.ddm_server = DdmServer(self.connection_string, ddm).__enter__()
 
     def on_new_state(self, payload: Dict):
-        state = self.download_ndarray(payload['state'])
+        state = self.download_ndarrays(payload['state'])
         if self.prev_state is not None:
             self.trainer.append(payload['params'], self.prev_state, state)
             self.state_count += 1
