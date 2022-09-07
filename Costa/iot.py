@@ -262,8 +262,13 @@ class IotServer(IotMailman, Logger):
         try:
             while True:
                 time.sleep(0.1)
+                self.wait_poll()
         except KeyboardInterrupt:
             pass
+
+    def wait_poll(self):
+        """Override this method to perform actions while waiting."""
+        pass
 
     def method_called(self, request: MethodRequest):
         """Primary callback for responding to a cloud-to-device request.
