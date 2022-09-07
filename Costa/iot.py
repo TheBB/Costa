@@ -413,7 +413,7 @@ class IotClient(IotMailman, Logger):
                 self.log('Received event:', payload['name'])
                 getattr(self, func)(payload)
             except Exception as e:
-                print(e)
+                print('Error:', e)
 
 
 class PbmServer(IotServer):
