@@ -64,6 +64,16 @@ class PhysicsModel(ABC):
         :return: Corrected prediction of next timestep.
         """
 
+    @abstractmethod
+    def qi(self, params: Parameters, u: VectorData, name: str) -> float:
+        """Calculate a named quantity of interest.
+
+        :param params: Dictionary of parameters.
+            By convention the timestep is named 'dt'.
+        :param u: Coefficient data.
+        :param name: Name of quantity to compute.
+        :return: Computed quantity.
+        """
 
 
 class DataModel(ABC):

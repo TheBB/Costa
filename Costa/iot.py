@@ -456,6 +456,11 @@ class PbmServer(IotServer):
         ucorr = self.pbm.correct(payload['params'], uprev, sigma)
         return {'corrected': self.upload_ndarrays('ucorr', ucorr)}
 
+    def on_qi(self, payload: Dict) -> Dict:
+        u = self.download_ndarrays(payload['u'])
+        qi = self.pbm.qi(payload['params'], u, payload['name'])
+        return {'qi': qi}
+
 
 class PbmClient(PhysicsModel, IotClient):
     """A PbmClient exposes the functionality of a remote physics-based model on Azure IoT
@@ -505,6 +510,13 @@ class PbmClient(PhysicsModel, IotClient):
             'sigma': self.upload_ndarrays('sigma', sigma),
         })['corrected']
         return self.download_ndarrays(ref)
+
+    def qi(self, params, u, name):
+        return self.invoke(self.device, 'qi', {
+            'params': params,
+            'u': self.upload_ndarrays('u', u),
+            'name': name,
+        })['qi']
 
 
 class DdmServer(IotServer):

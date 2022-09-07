@@ -107,3 +107,6 @@ class PbmFlattener(api.PhysicsModel, Flattener):
     def correct(self, mu, uprev, sigma):
         r = self.pbm.correct(mu, self.flatten(uprev), self.flatten(sigma))
         return self.deflatten(r)
+
+    def qi(self, mu, u, name):
+        return self.pbm.qi(mu, self.flatten(u), name)
