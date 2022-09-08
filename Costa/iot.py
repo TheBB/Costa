@@ -1,3 +1,4 @@
+from abc import abstractmethod
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from io import BytesIO
@@ -19,7 +20,7 @@ from azure.storage.blob import BlobClient
 from msrest.exceptions import HttpOperationError
 import numpy as np
 
-from .api import DataModel, DataTrainer, PhysicsModel
+from .api import DataModel, DataTrainer, PhysicsModel, VectorData
 from .util import Logger
 
 
@@ -590,6 +591,33 @@ class PhysicalDevice(IotServer):
         not a time-step advanced from the previous state.
         """
         self.emit('clean_state', {})
+
+
+class OptimizingController(IotClient):
+    """A controller that optimizes some quantity."""
+
+    state: VectorData
+    control: Dict[str, float]
+    target: str
+
+    def __init__(self, name: str, config: IotConfig, target: str, control: Dict[str, float]):
+        super().__init__(name, config)
+        self.state = {}
+        self.control = control
+        self.target = target
+
+    def on_new_state(self, payload):
+        field = payload['field']
+        state = self.download_ndarrays(payload['state'])
+        self.state[field] = state
+
+    def on_state_refreshed(self, _):
+        if self.optimize():
+            self.invoke(self.target, 'control', {'params': self.control})
+
+    @abstractmethod
+    def optimize(self) -> bool:
+        pass
 
 
 class DdmTrainer(IotClient):
