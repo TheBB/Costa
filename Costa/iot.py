@@ -580,6 +580,10 @@ class PhysicalDevice(IotServer):
             'state': self.upload_ndarrays('state', state)
         })
 
+    def emit_refreshed(self):
+        """Notify the cloud that the state has been completely refreshed."""
+        self.emit('state_refreshed', {})
+
     def emit_clean(self):
         """Notify the cloud that the setup has changed and that the standard
         time sequence of states is interrupted.  That is, the following state is
