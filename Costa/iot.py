@@ -166,6 +166,11 @@ class IotMailman:
             return self._upload_data_as_server(name, fmt, data)
         return self._upload_data_as_client(name, fmt, data)
 
+    def upload_file(self, filename: str) -> Dict:
+        path = Path(filename)
+        with open(filename, 'rb') as f:
+            return self.upload_data(path.stem, path.suffix[1:], f)
+
     def upload_single_ndarray(self, name: str, data: Union[List, np.ndarray]) -> Dict:
         if not isinstance(data, np.ndarray):
             data = np.array(data)
@@ -203,6 +208,11 @@ class IotMailman:
                 client.download_blob().readinto(b)
             b.seek(0)
             yield b
+
+    def download_file(self, filedata: Dict, filename: str):
+        with open(filename, 'wb') as f:
+            with self.download(filedata) as g:
+                f.write(g.getvalue())
 
     def download_single_ndarray(self, filedata: Dict) -> np.ndarray:
         assert filedata['format'] == 'npy'
